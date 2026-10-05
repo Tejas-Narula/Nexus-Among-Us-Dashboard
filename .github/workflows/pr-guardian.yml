@@ -86,7 +86,7 @@ jobs:
 
       - name: Maintainer Review Enforcement Warning
         if: steps.check-author.outputs.is_authorized == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const author = context.payload.pull_request.user.login;
