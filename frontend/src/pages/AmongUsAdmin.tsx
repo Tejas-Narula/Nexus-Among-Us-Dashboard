@@ -171,33 +171,61 @@ export default function AmongUsAdmin() {
     pocRoom: '',
     title: '',
   });
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // -------------------------------------------------------------
   // INITIAL LOAD & LOG POLLING
   // -------------------------------------------------------------
   useEffect(() => {
+    // Seed immediately from local storage cache
     setRooms(AllocationDatabase.getRooms());
     setTeams(AllocationDatabase.getTeams());
     setStaffUsers(AllocationDatabase.getStaffUsers());
     setActivityLogs(AllocationDatabase.getLogs());
     setPowerLibrary(AllocationDatabase.getPowerLibrary());
 
-    // Background sync from Supabase if connected
-    AllocationDatabase.syncAllFromSupabase().then(() => {
+    const refreshFromSupabase = async () => {
+      try {
+        await AllocationDatabase.syncAllFromSupabase();
+        setRooms(AllocationDatabase.getRooms());
+        setTeams(AllocationDatabase.getTeams());
+        setStaffUsers(AllocationDatabase.getStaffUsers());
+        setActivityLogs(AllocationDatabase.getLogs());
+        setPowerLibrary(AllocationDatabase.getPowerLibrary());
+      } catch (err) {
+        setActivityLogs(AllocationDatabase.getLogs());
+        setTeams(AllocationDatabase.getTeams());
+      }
+    };
+
+    // Immediate background sync from Supabase
+    refreshFromSupabase();
+
+    // Auto-poll logs and teams so live player actions, game completions & points display immediately
+    const pollLogs = setInterval(() => {
+      refreshFromSupabase();
+    }, 4000);
+    return () => clearInterval(pollLogs);
+  }, []);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      await AllocationDatabase.syncAllFromSupabase();
       setRooms(AllocationDatabase.getRooms());
       setTeams(AllocationDatabase.getTeams());
       setStaffUsers(AllocationDatabase.getStaffUsers());
       setActivityLogs(AllocationDatabase.getLogs());
       setPowerLibrary(AllocationDatabase.getPowerLibrary());
-    }).catch(() => {});
-
-    // Auto-poll logs and teams so live player actions & power activations display immediately
-    const pollLogs = setInterval(() => {
+      notify('All logs, teams, and scores synced from database!');
+    } catch (err) {
       setActivityLogs(AllocationDatabase.getLogs());
       setTeams(AllocationDatabase.getTeams());
-    }, 3000);
-    return () => clearInterval(pollLogs);
-  }, []);
+      notify('Refreshed local records');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // -------------------------------------------------------------
   // GAME POINTS & LEADERBOARD HANDLERS
@@ -1359,6 +1387,16 @@ export default function AmongUsAdmin() {
             </div>
 
             <div className="flex items-center gap-2.5 text-xs">
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                title="Sync database from Supabase"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-300 hover:border-black rounded-full font-medium text-[11px] transition shadow-2xs cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 text-neutral-600 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
+              </button>
+
               <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-medium text-[11px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Live Sync Active
@@ -2485,14 +2523,12 @@ export default function AmongUsAdmin() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-end gap-3 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={() => {
-                    setActivityLogs(AllocationDatabase.getLogs());
-                    notify('Logs refreshed');
-                  }}
-                  className="px-3 py-1.5 border border-neutral-300 hover:border-black rounded-md font-medium text-xs transition flex items-center gap-1.5"
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  className="px-3 py-1.5 border border-neutral-300 hover:border-black rounded-md font-medium text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Refresh</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isSyncing ? 'Syncing...' : 'Refresh'}</span>
                 </button>
                 <button
                   onClick={handleExportLogsCSV}

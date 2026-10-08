@@ -281,6 +281,18 @@ async function syncTeamsToSupabase(teams: Team[]) {
     if (!supabase) return;
     const payload = teams.map(t => {
       const code = t.teamCode || t.badgeCode || null;
+
+      // Pack metadata record into power_ports JSONB column so gamesPlayed and sabotagesAvailable are preserved without violating schema
+      const metaPort = {
+        id: '__meta__',
+        port: 99,
+        name: '__meta__',
+        gamesPlayed: t.gamesPlayed || [],
+        sabotagesAvailable: t.sabotagesAvailable ?? (t.isImpostor ? 3 : 0),
+      };
+      const cleanedPowerPorts = (t.powerPorts || []).filter((p: any) => p && p.id !== '__meta__');
+      const powerPortsWithMeta = [...cleanedPowerPorts, metaPort];
+
       const row: Record<string, any> = {
         name: t.name,
         leader_name: t.leaderName || t.name,
@@ -288,6 +300,7 @@ async function syncTeamsToSupabase(teams: Team[]) {
         phone: t.phone || null,
         color: t.color || '#00F0FF',
         score: t.score || 0,
+        tasks_completed: (t.gamesPlayed || []).length || t.tasksCompleted || 0,
         status: t.status || 'active',
         team_code: code,
         badge_code: code,
@@ -297,10 +310,8 @@ async function syncTeamsToSupabase(teams: Team[]) {
         assigned_zone: t.assignedZone || null,
         is_impostor: !!t.isImpostor,
         impostor_player_name: t.impostorPlayerName || null,
-        sabotages_available: t.sabotagesAvailable ?? (t.isImpostor ? 3 : 0),
-        power_ports: t.powerPorts || [],
+        power_ports: powerPortsWithMeta,
         active_effects: t.activeEffects || [],
-        games_played: t.gamesPlayed || [],
         members: (t.memberDetails || []).map(m => ({
           id: m.id,
           name: m.name,
@@ -422,9 +433,26 @@ export const AllocationDatabase = {
   // -------------------------------------------------------------
   // ROOMS & ZONES MANAGEMENT
   // -------------------------------------------------------------
-  getRooms(): RoomRecord[] { return cachedRooms; },
+  getRooms(): RoomRecord[] {
+    if (cachedRooms.length === 0) {
+      try {
+        const stored = localStorage.getItem(ROOMS_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) cachedRooms = parsed;
+        }
+      } catch (e) {}
+    }
+    return cachedRooms;
+  },
 
-  saveRooms(rooms: RoomRecord[]): void { cachedRooms = rooms; syncRoomsToSupabase(rooms).catch(() => {}); },
+  saveRooms(rooms: RoomRecord[]): void {
+    cachedRooms = rooms;
+    try {
+      localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(rooms));
+    } catch (e) {}
+    syncRoomsToSupabase(rooms).catch(() => {});
+  },
 
   createRoom(room: Omit<RoomRecord, 'id'>): RoomRecord {
     const rooms = this.getRooms();
@@ -518,9 +546,26 @@ export const AllocationDatabase = {
   // -------------------------------------------------------------
   // TEAMS & PLAYERS MANAGEMENT
   // -------------------------------------------------------------
-  getTeams(): Team[] { return cachedTeams; },
+  getTeams(): Team[] {
+    if (cachedTeams.length === 0) {
+      try {
+        const stored = localStorage.getItem(TEAMS_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) cachedTeams = parsed;
+        }
+      } catch (e) {}
+    }
+    return cachedTeams;
+  },
 
-  saveTeams(teams: Team[]): void { cachedTeams = teams; syncTeamsToSupabase(teams).catch(() => {}); },
+  saveTeams(teams: Team[]): void {
+    cachedTeams = teams;
+    try {
+      localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(teams));
+    } catch (e) {}
+    syncTeamsToSupabase(teams).catch(() => {});
+  },
 
   createTeam(teamData: {
     name: string;
@@ -1821,37 +1866,59 @@ export const AllocationDatabase = {
         }));
         cachedRooms = mappedRooms;
         roomsCount = mappedRooms.length;
+        try {
+          localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(mappedRooms));
+        } catch (e) {}
       }
 
       // 2. Fetch Teams
       const { data: teamsData, error: teamsErr } = await supabase.from('teams').select('*');
       if (!teamsErr && teamsData && teamsData.length > 0) {
-        const mappedTeams: Team[] = teamsData.map((t: any) => ({
-          id: t.id,
-          teamCode: t.team_code || undefined,
-          name: t.name,
-          leaderName: t.leader_name || t.name,
-          phone: t.phone || '',
-          email: t.email || '',
-          color: t.color || '#00F0FF',
-          score: t.score || 0,
-          status: t.status || 'active',
-          assignedRoom: t.assigned_room || undefined,
-          assignedRoomId: t.assigned_room_id || undefined,
-          assignedRoomName: t.assigned_room_name || undefined,
-          assignedZone: t.assigned_zone || undefined,
-          isImpostor: !!t.is_impostor,
-          impostorPlayerName: t.impostor_player_name || undefined,
-          sabotagesAvailable: t.sabotages_available ?? (t.is_impostor ? 3 : 0),
-          powerPorts: t.power_ports || (t.is_impostor ? createDefaultPowerPorts() : undefined),
-          activeEffects: t.active_effects || [],
-          gamesPlayed: t.games_played || t.gamesPlayed || [],
-          members: Array.isArray(t.members) ? t.members.map((m: any) => typeof m === 'string' ? m : m.name) : [],
-          memberDetails: Array.isArray(t.members) ? t.members.map((m: any, idx: number) => typeof m === 'string' ? { id: `m-${idx}`, name: m } : m) : [],
-          createdAt: t.created_at || new Date().toISOString(),
-        }));
+        const mappedTeams: Team[] = teamsData.map((t: any) => {
+          const rawPowerPorts = Array.isArray(t.power_ports) ? t.power_ports : [];
+          const metaPort = rawPowerPorts.find((p: any) => p && p.id === '__meta__');
+          const cleanPowerPorts = rawPowerPorts.filter((p: any) => p && p.id !== '__meta__');
+
+          const gamesPlayed = (metaPort && Array.isArray(metaPort.gamesPlayed))
+            ? metaPort.gamesPlayed
+            : (Array.isArray(t.games_played) ? t.games_played : (Array.isArray(t.gamesPlayed) ? t.gamesPlayed : []));
+
+          const sabotagesAvailable = (metaPort && typeof metaPort.sabotagesAvailable === 'number')
+            ? metaPort.sabotagesAvailable
+            : (t.sabotages_available ?? (t.is_impostor ? 3 : 0));
+
+          return {
+            id: t.id,
+            teamCode: t.team_code || undefined,
+            badgeCode: t.badge_code || t.team_code || undefined,
+            name: t.name,
+            leaderName: t.leader_name || t.name,
+            phone: t.phone || '',
+            email: t.email || '',
+            color: t.color || '#00F0FF',
+            score: t.score || 0,
+            tasksCompleted: t.tasks_completed ?? gamesPlayed.length ?? 0,
+            status: t.status || 'active',
+            assignedRoom: t.assigned_room || undefined,
+            assignedRoomId: t.assigned_room_id || undefined,
+            assignedRoomName: t.assigned_room_name || undefined,
+            assignedZone: t.assigned_zone || undefined,
+            isImpostor: !!t.is_impostor,
+            impostorPlayerName: t.impostor_player_name || undefined,
+            sabotagesAvailable,
+            powerPorts: cleanPowerPorts.length > 0 ? cleanPowerPorts : (t.is_impostor ? createDefaultPowerPorts() : undefined),
+            activeEffects: t.active_effects || [],
+            gamesPlayed,
+            members: Array.isArray(t.members) ? t.members.map((m: any) => typeof m === 'string' ? m : m.name) : [],
+            memberDetails: Array.isArray(t.members) ? t.members.map((m: any, idx: number) => typeof m === 'string' ? { id: `m-${idx}`, name: m } : m) : [],
+            createdAt: t.created_at || new Date().toISOString(),
+          };
+        });
         cachedTeams = mappedTeams;
         teamsCount = mappedTeams.length;
+        try {
+          localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(mappedTeams));
+        } catch (e) {}
       }
 
       // 3. Fetch Admin Users from Supabase
@@ -1890,6 +1957,97 @@ export const AllocationDatabase = {
         }));
         cachedPowers = mappedPowers;
         powersCount = mappedPowers.length;
+      }
+
+      // 5. Fetch Activity Logs from Supabase
+      const { data: logsData, error: logsErr } = await supabase
+        .from('activity_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(300);
+      if (!logsErr && logsData && logsData.length > 0) {
+        const mappedLogs: ActivityLogItem[] = logsData.map((l: any) => ({
+          id: l.id,
+          type: l.type,
+          message: l.message,
+          teamId: l.team_id || undefined,
+          roomName: l.room_name || undefined,
+          powerName: l.power_name || undefined,
+          portIndex: l.port_index || undefined,
+          severity: l.severity || 'info',
+          timestamp: l.created_at,
+        }));
+        cachedLogs = mappedLogs;
+        try {
+          localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(mappedLogs));
+        } catch (e) {}
+
+        // Correlate task completion logs with teams so no completed games are ever lost
+        const taskLogs = mappedLogs.filter(l => l.type === 'task' && l.message && l.message.includes('completed'));
+        if (taskLogs.length > 0 && cachedTeams.length > 0) {
+          cachedTeams = cachedTeams.map(team => {
+            const teamCode = (team.teamCode || '').toUpperCase();
+            const teamId = (team.id || '').toUpperCase();
+            const teamName = (team.name || '').toLowerCase();
+            const relevantLogs = taskLogs.filter(l => {
+              const lTeam = (l.teamId || '').toUpperCase();
+              return lTeam === teamCode || lTeam === teamId || (l.message && l.message.toLowerCase().includes(teamName));
+            });
+
+            if (relevantLogs.length === 0) return team;
+
+            const existingGames = [...(team.gamesPlayed || [])];
+            let modified = false;
+
+            relevantLogs.forEach(log => {
+              const msg = log.message || '';
+              let detectedGameId: string | null = null;
+              let detectedTitle = '';
+
+              if (msg.includes('Emoji Decoder') || msg.toLowerCase().includes('emoji')) {
+                detectedGameId = 'emoji';
+                detectedTitle = 'Emoji Decoder';
+              } else if (msg.includes('Code Typer') || msg.toLowerCase().includes('monkeytype') || msg.toLowerCase().includes('typer')) {
+                detectedGameId = 'monkeytype';
+                detectedTitle = 'Code Typer Mission';
+              } else if (msg.includes('Wordle') || msg.toLowerCase().includes('wordle')) {
+                detectedGameId = 'wordle';
+                detectedTitle = 'Wordle';
+              } else if (msg.includes('Meme Decoder') || msg.toLowerCase().includes('memedecoder')) {
+                detectedGameId = 'memedecoder';
+                detectedTitle = 'Meme Decoder Terminal';
+              } else if (msg.includes('Pacman') || msg.toLowerCase().includes('pacman')) {
+                detectedGameId = 'pacman';
+                detectedTitle = 'Pacman Sector Defense';
+              }
+
+              if (detectedGameId && !existingGames.some(g => g.gameId === detectedGameId)) {
+                existingGames.push({
+                  id: log.id || generateId('game-play'),
+                  gameId: detectedGameId,
+                  gameTitle: detectedTitle,
+                  pointsAwarded: 40,
+                  score: 40,
+                  timestamp: log.timestamp || new Date().toISOString(),
+                });
+                modified = true;
+              }
+            });
+
+            if (modified) {
+              return {
+                ...team,
+                gamesPlayed: existingGames,
+                tasksCompleted: Math.max(team.tasksCompleted || 0, existingGames.length),
+              };
+            }
+            return team;
+          });
+
+          try {
+            localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(cachedTeams));
+          } catch (e) {}
+        }
       }
     } catch (e) {
       console.warn('Sync from Supabase failed or offline', e);

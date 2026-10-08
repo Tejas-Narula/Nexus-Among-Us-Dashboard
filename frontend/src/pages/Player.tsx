@@ -140,17 +140,23 @@ export default function Player() {
   const refreshGameContext = () => {
     if (!session) return;
     const allTeams = AllocationDatabase.getTeams();
-    const myTeamId = session.teamId?.toUpperCase();
+    const myTeamId = session.teamId?.trim().toUpperCase();
 
     const myTeam = allTeams.find(
-      t => t.teamCode?.toUpperCase() === myTeamId || t.id?.toUpperCase() === myTeamId
+      t =>
+        (t.teamCode && t.teamCode.trim().toUpperCase() === myTeamId) ||
+        (t.badgeCode && t.badgeCode.trim().toUpperCase() === myTeamId) ||
+        (t.id && t.id.trim().toUpperCase() === myTeamId) ||
+        (session.teamName && t.name && t.name.trim().toLowerCase() === session.teamName.trim().toLowerCase())
     );
 
     const now = Date.now();
     const activeFrozen = { ...AllocationDatabase.getFrozenGames() };
 
     if (myTeam) {
-      setCompletedGames((myTeam.gamesPlayed || []).map(g => g.gameId));
+      const rawGames = (myTeam.gamesPlayed || []).map(g => g.gameId);
+      const uniqueGames = Array.from(new Set(rawGames));
+      setCompletedGames(uniqueGames);
       setSabotagesAvailable(myTeam.sabotagesAvailable ?? (myTeam.isImpostor ? 3 : 0));
 
       const validEffects = (myTeam.activeEffects || []).filter(e => e.expiresAt > now);
@@ -186,16 +192,21 @@ export default function Player() {
 
   useEffect(() => {
     refreshGameContext();
-    const interval = setInterval(refreshGameContext, 2000);
-    // Background polling from Supabase to sync across crewmate and impostor devices
-    const syncInterval = setInterval(() => {
-      AllocationDatabase.syncAllFromSupabase().catch(() => {});
-    }, 3500);
 
-    return () => {
-      clearInterval(interval);
-      clearInterval(syncInterval);
+    const syncAndRefresh = async () => {
+      try {
+        await AllocationDatabase.syncAllFromSupabase();
+      } catch (e) {}
+      refreshGameContext();
     };
+
+    // Immediate background sync from Supabase
+    syncAndRefresh();
+
+    // Background polling from Supabase to sync across crewmate and impostor devices
+    const interval = setInterval(syncAndRefresh, 3000);
+
+    return () => clearInterval(interval);
   }, [session]);
 
   useEffect(() => {
@@ -250,6 +261,18 @@ export default function Player() {
               .single();
 
             if (teamRecord) {
+              const meta = Array.isArray(teamRecord.power_ports)
+                ? teamRecord.power_ports.find((p: any) => p && p.id === '__meta__')
+                : null;
+              const gamesPlayed = (meta && Array.isArray(meta.gamesPlayed))
+                ? meta.gamesPlayed
+                : (Array.isArray(teamRecord.games_played) ? teamRecord.games_played : []);
+
+              if (gamesPlayed.length > 0) {
+                const uniqueIds = Array.from(new Set(gamesPlayed.map((g: any) => g.gameId)));
+                setCompletedGames(uniqueIds as string[]);
+              }
+
               const updatedSession: PlayerSession = {
                 ...creds,
                 teamName: teamRecord.name,
