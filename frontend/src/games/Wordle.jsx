@@ -40,20 +40,24 @@ export default function WordleClone({ onUnlock = () => {} }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Check Unlock Logic (Triggered on Round Completion)
-  const [teamScore, setTeamScore] = useState(0);
+  const [isStationFrozen, setIsStationFrozen] = useState(false);
+  const [freezeRemaining, setFreezeRemaining] = useState(0);
+
   useEffect(() => {
-    try {
-      const sessionRaw = localStorage.getItem('nexus_player_session');
-      if (sessionRaw) {
-        const session = JSON.parse(sessionRaw);
-        if (session?.teamId) {
-           const team = AllocationDatabase.getTeams().find(t => t.id === session.teamId);
-           if (team) setTeamScore(team.score || 0);
-        }
+    const checkFreeze = () => {
+      const frozen = AllocationDatabase.getFrozenGames();
+      const freezeTime = frozen['wordle'] || 0;
+      if (freezeTime > Date.now()) {
+        setIsStationFrozen(true);
+        setFreezeRemaining(Math.ceil((freezeTime - Date.now()) / 1000));
+      } else {
+        setIsStationFrozen(false);
       }
-    } catch(e) {}
-  }, [localWins]);
+    };
+    checkFreeze();
+    const interval = setInterval(checkFreeze, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleWin = () => {
     const newLocalWins = localWins + 1;
@@ -64,7 +68,7 @@ export default function WordleClone({ onUnlock = () => {} }) {
       if (sessionRaw) {
         const session = JSON.parse(sessionRaw);
         if (session?.teamId) {
-          const res = AllocationDatabase.recordGameCompletion(session.teamId, 'wordle', 'Wordle', 10);
+          const res = AllocationDatabase.recordGameCompletion(session.teamId, 'wordle', 'Wordle');
           if (res.success) {
             setAwardNotice(`✅ MISSION ACCOMPLISHED! Wordle station verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
             setTimeout(() => navigate('/player'), 3000);
@@ -199,9 +203,25 @@ export default function WordleClone({ onUnlock = () => {} }) {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col relative pt-16">
       <header style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 20px', width: '100%', position: 'absolute', top: 0, left: 0, zIndex: 100 }}>
-        <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer' }}>← Back</button>
-        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px' }}>Score: {teamScore}</div>
+        <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer' }}>← Back to Mission Deck</button>
+        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', letterSpacing: '1px' }}>TERMINAL: WORDLE DECODER</div>
       </header>
+
+      {isStationFrozen && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border-2 border-cyan-400 p-8 rounded-2xl max-w-md w-full text-center shadow-2xl animate-pulse">
+            <div className="text-5xl mb-4">❄️</div>
+            <h2 className="text-2xl font-bold text-cyan-300 mb-2">STATION FROZEN BY IMPOSTOR</h2>
+            <p className="text-gray-300 text-sm mb-4">Central systems sabotaged. Terminal rebooting in {freezeRemaining}s...</p>
+            <button
+              onClick={() => navigate('/player')}
+              className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-6 py-2 rounded-lg cursor-pointer transition-colors"
+            >
+              Return to Mission Deck
+            </button>
+          </div>
+        </div>
+      )}
 
       {awardNotice && (
         <div className="bg-emerald-950 border-b border-emerald-500 text-emerald-200 px-4 py-2 text-center text-sm font-mono font-bold animate-pulse">

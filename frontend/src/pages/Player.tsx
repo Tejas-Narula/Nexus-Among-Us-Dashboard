@@ -100,14 +100,16 @@ export default function Player() {
   });
 
   const [statusText, setStatusText] = useState('LIVE • CONNECTED');
-  const [teamScore, setTeamScore] = useState(0);
   const [completedGames, setCompletedGames] = useState<string[]>([]);
   
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const [selectedGameMarker, setSelectedGameMarker] = useState<string | null>(null);
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [sabotagedMarkers, setSabotagedMarkers] = useState<string[]>([]);
   const [sabotagesAvailable, setSabotagesAvailable] = useState(0);
   const [frozenGames, setFrozenGames] = useState<Record<string, number>>({});
+  const [activeSabotageAlert, setActiveSabotageAlert] = useState<{ powerName: string; description: string; remaining: number } | null>(null);
+  const [sabotageToast, setSabotageToast] = useState<string | null>(null);
   
   const [roomTeams, setRoomTeams] = useState<Team[]>([]);
 
@@ -144,23 +146,56 @@ export default function Player() {
       t => t.teamCode?.toUpperCase() === myTeamId || t.id?.toUpperCase() === myTeamId
     );
 
+    const now = Date.now();
+    const activeFrozen = { ...AllocationDatabase.getFrozenGames() };
+
     if (myTeam) {
-      setTeamScore(myTeam.score || 0);
       setCompletedGames((myTeam.gamesPlayed || []).map(g => g.gameId));
-      setSabotagesAvailable(myTeam.sabotagesAvailable || 0);
+      setSabotagesAvailable(myTeam.sabotagesAvailable ?? (myTeam.isImpostor ? 3 : 0));
+
+      const validEffects = (myTeam.activeEffects || []).filter(e => e.expiresAt > now);
+      if (validEffects.length > 0) {
+        const primary = validEffects[0];
+        const remaining = Math.max(1, Math.ceil((primary.expiresAt - now) / 1000));
+        setActiveSabotageAlert({
+          powerName: primary.powerName,
+          description: primary.description || 'Station affected by Impostor sabotage.',
+          remaining,
+        });
+
+        validEffects.forEach(eff => {
+          const lower = eff.powerName.toLowerCase();
+          ['wordle', 'emoji', 'memedecoder', 'monkeytype', 'pacman'].forEach(gId => {
+            const shortKey = gId.replace('decoder', '');
+            if (lower.includes(gId) || lower.includes(shortKey)) {
+              activeFrozen[gId] = Math.max(activeFrozen[gId] || 0, eff.expiresAt);
+            }
+          });
+        });
+      } else {
+        setActiveSabotageAlert(null);
+      }
     }
 
     const assignedRoom = session.assignedRoom || 'Room 1';
     const teamsInRoom = allTeams.filter(t => (t.assignedRoomName || t.assignedRoom || 'Room 1') === assignedRoom);
     setRoomTeams(teamsInRoom);
     
-    setFrozenGames(AllocationDatabase.getFrozenGames());
+    setFrozenGames(activeFrozen);
   };
 
   useEffect(() => {
     refreshGameContext();
-    const interval = setInterval(refreshGameContext, 2500);
-    return () => clearInterval(interval);
+    const interval = setInterval(refreshGameContext, 2000);
+    // Background polling from Supabase to sync across crewmate and impostor devices
+    const syncInterval = setInterval(() => {
+      AllocationDatabase.syncAllFromSupabase().catch(() => {});
+    }, 3500);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(syncInterval);
+    };
   }, [session]);
 
   useEffect(() => {
@@ -247,20 +282,29 @@ export default function Player() {
     if (isRightPanelOpen) setSelectedGameMarker(null);
   };
 
+  const targetCrewmates = roomTeams.filter(t => !t.isImpostor && (t.teamCode !== session?.teamId && t.id !== session?.teamId));
+
   const handleMapSabotage = (powerName: string, actionType: string) => {
     if (!isImpostor || !session) return;
-    const result = AllocationDatabase.triggerPower(session.teamId, `${powerName}_${actionType}`);
+    const result = AllocationDatabase.triggerPower(
+      session.teamId,
+      `${powerName}_${actionType}`,
+      selectedTargetId || undefined
+    );
     if (!result.success) {
       alert(`SABOTAGE FAILED: ${result.message}`);
       return;
     }
     
+    setSabotageToast(result.message);
+    setTimeout(() => setSabotageToast(null), 5000);
+
     // Refresh context immediately to update sabotages count
     refreshGameContext();
 
     setSabotagedMarkers(prev => {
-        if (!prev.includes(powerName)) return [...prev, powerName];
-        return prev;
+      if (!prev.includes(powerName)) return [...prev, powerName];
+      return prev;
     });
   };
 
@@ -294,17 +338,29 @@ export default function Player() {
               {isImpostor ? 'IMPOSTER' : 'CREWMATE'}
             </div>
           </div>
-          <div className="hud-score">
-            <span className="score-label">TEAM_SCORE</span>
-            <span className="score-value">{teamScore.toLocaleString()}</span>
+          <div className="hud-task-progress">
+            <span className="progress-label">TASKS_SECURED</span>
+            <span className="progress-value">{completedGames.length} / {gamesList.length}</span>
           </div>
         </header>
+
+        {/* Active Sabotage Alert Ribbon (Visible to affected crewmates) */}
+        {activeSabotageAlert && (
+          <div className="active-sabotage-alert-banner">
+            <span className="pulse-alert-dot"></span>
+            <span className="alert-text">
+              🚨 WARNING: {activeSabotageAlert.powerName.toUpperCase()} — {activeSabotageAlert.description} ({activeSabotageAlert.remaining}s REMAINING)
+            </span>
+          </div>
+        )}
 
         {/* Tasks Arena */}
         <main className="task-arena">
           {gamesList.map((game, index) => {
             const isCompleted = completedGames.includes(game.id);
-            const isFrozen = frozenGames[game.id] && frozenGames[game.id] > Date.now();
+            const freezeUntil = frozenGames[game.id] || 0;
+            const isFrozen = freezeUntil > Date.now();
+            const freezeSecs = isFrozen ? Math.ceil((freezeUntil - Date.now()) / 1000) : 0;
             const missionClass = getMissionClass(game.id);
             
             return (
@@ -335,7 +391,7 @@ export default function Player() {
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                         <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
-                      FROZEN BY IMPOSTOR
+                      FROZEN BY IMPOSTOR ({freezeSecs}s)
                     </>
                   ) : isCompleted ? (
                     <>
@@ -412,6 +468,38 @@ export default function Player() {
                 SABOTAGES: <span className={sabotagesAvailable > 0 ? 'available' : 'empty'}>{sabotagesAvailable}</span>
               </div>
             </div>
+
+            {/* Target Crewmate Squad Selector */}
+            <div className="target-selection-box">
+              <div className="target-selection-header">
+                <span>🎯 SELECT TARGET CREWMATE SQUAD:</span>
+                <span className="target-count">{targetCrewmates.length} IN SECTOR</span>
+              </div>
+              <div className="target-chips-container">
+                <button
+                  type="button"
+                  className={`target-chip ${selectedTargetId === null ? 'active' : ''}`}
+                  onClick={() => setSelectedTargetId(null)}
+                >
+                  ⚡ ALL SQUADS IN SECTOR
+                </button>
+                {targetCrewmates.map(t => {
+                  const tCode = t.teamCode || t.id;
+                  const isSelected = selectedTargetId === tCode || selectedTargetId === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={`target-chip ${isSelected ? 'active' : ''}`}
+                      onClick={() => setSelectedTargetId(tCode)}
+                    >
+                      <span>{t.name}</span>
+                      <span className="chip-code">[{tCode}]</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             
             <div className="map-viewport">
               <div className="map-bg"></div>
@@ -438,10 +526,16 @@ export default function Player() {
                 {(() => {
                   const markerData = SABOTAGE_MAP_MARKERS.find(m => m.power.name === selectedGameMarker);
                   const isSabotaged = sabotagedMarkers.includes(selectedGameMarker);
+                  const currentTargetObj = targetCrewmates.find(t => (t.teamCode || t.id) === selectedTargetId);
+                  const targetLabel = currentTargetObj ? `${currentTargetObj.name} [${currentTargetObj.teamCode || currentTargetObj.id}]` : 'ALL SQUADS IN SECTOR';
+
                   return (
                     <>
                       <div className="target-head">
-                        <h3>{markerData?.power.title.toUpperCase()}</h3>
+                        <div>
+                          <h3>{markerData?.power.title.toUpperCase()}</h3>
+                          <div className="targeted-label">TARGET: <span>{targetLabel}</span></div>
+                        </div>
                         <button className="close-target" onClick={() => setSelectedGameMarker(null)}>
                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
@@ -453,21 +547,24 @@ export default function Player() {
                         <button 
                           className={`sabotage-btn freeze ${isSabotaged ? 'disabled' : ''}`}
                           onClick={() => handleMapSabotage(selectedGameMarker, 'FREEZE')}
-                          disabled={isSabotaged}
+                          disabled={isSabotaged || sabotagesAvailable <= 0}
+                          title="Freeze terminal station"
                         >
-                          FREEZE
+                          FREEZE (60s)
                         </button>
                         <button 
                           className={`sabotage-btn steal ${isSabotaged ? 'disabled' : ''}`}
                           onClick={() => handleMapSabotage(selectedGameMarker, 'STEAL')}
-                          disabled={isSabotaged}
+                          disabled={isSabotaged || sabotagesAvailable <= 0}
+                          title="Steal points"
                         >
                           STEAL
                         </button>
                         <button 
                           className={`sabotage-btn reset ${isSabotaged ? 'disabled' : ''}`}
                           onClick={() => handleMapSabotage(selectedGameMarker, 'RESET')}
-                          disabled={isSabotaged}
+                          disabled={isSabotaged || sabotagesAvailable <= 0}
+                          title="Reset station progress"
                         >
                           RESET
                         </button>
@@ -475,6 +572,12 @@ export default function Player() {
                     </>
                   );
                 })()}
+              </div>
+            )}
+
+            {sabotageToast && (
+              <div className="sabotage-toast-banner">
+                {sabotageToast}
               </div>
             )}
           </div>

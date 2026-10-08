@@ -297,6 +297,7 @@ async function syncTeamsToSupabase(teams: Team[]) {
         assigned_zone: t.assignedZone || null,
         is_impostor: !!t.isImpostor,
         impostor_player_name: t.impostorPlayerName || null,
+        sabotages_available: t.sabotagesAvailable ?? (t.isImpostor ? 3 : 0),
         power_ports: t.powerPorts || [],
         active_effects: t.activeEffects || [],
         games_played: t.gamesPlayed || [],
@@ -1474,13 +1475,12 @@ export const AllocationDatabase = {
     const actualPowerName = parts[0];
     const actionType = parts.length > 1 ? parts[1] : 'FREEZE';
 
-    if ((impostor.sabotagesAvailable || 0) <= 0) {
-      return { success: false, message: 'No sabotages available.' };
+    if (impostor.sabotagesAvailable === undefined) {
+      impostor.sabotagesAvailable = 3;
     }
 
-    const hasPower = impostor.powerPorts?.some(p => p.name === actualPowerName && p.status !== 'disabled');
-    if (!hasPower) {
-      return { success: false, message: 'Power not enabled or available for this team.' };
+    if ((impostor.sabotagesAvailable || 0) <= 0) {
+      return { success: false, message: 'No sabotages available. Complete tasks or wait for recharge.' };
     }
 
     const powerToGameId: Record<string, string> = {
@@ -1488,33 +1488,147 @@ export const AllocationDatabase = {
       'Emoji Sabotage': 'emoji',
       'Meme Sabotage': 'memedecoder',
       'MonkeyType Sabotage': 'monkeytype',
-      'Pacman Sabotage': 'pacman'
+      'Pacman Sabotage': 'pacman',
+      'wordle': 'wordle',
+      'emoji': 'emoji',
+      'memedecoder': 'memedecoder',
+      'monkeytype': 'monkeytype',
+      'pacman': 'pacman',
     };
-    const gameId = powerToGameId[actualPowerName];
-    let actionText = '';
+    const gameId = powerToGameId[actualPowerName] || actualPowerName.toLowerCase().replace(/\s+/g, '');
 
-    impostor.sabotagesAvailable = (impostor.sabotagesAvailable || 0) - 1;
+    const hasPower =
+      !impostor.powerPorts ||
+      impostor.powerPorts.length === 0 ||
+      powerToGameId[actualPowerName] !== undefined ||
+      impostor.powerPorts.some(p => p.name === actualPowerName && p.status !== 'disabled');
+
+    if (!hasPower) {
+      return { success: false, message: 'Power not enabled or available for this team.' };
+    }
+
+    impostor.sabotagesAvailable = Math.max(0, (impostor.sabotagesAvailable || 0) - 1);
+
+    let targetTeam: Team | undefined;
+    if (targetTeamId) {
+      targetTeam = teams.find(
+        t => t.id === targetTeamId || t.teamCode?.toUpperCase() === targetTeamId.toUpperCase()
+      );
+    }
+
+    let actionText = '';
+    const now = Date.now();
 
     if (actionType === 'FREEZE') {
       if (gameId) {
         this.freezeGame(gameId, 60000); // 1 minute
       }
-      actionText = `❄️ IMPOSTOR POWER: ${impostor.name} FROZE ${actualPowerName} for 1 minute!`;
-    } else if (actionType === 'STEAL') {
-      let stolen = 0;
-      teams.forEach(t => {
-        if (!t.isImpostor && t.status !== 'eliminated') {
-          const completed = t.gamesPlayed?.some(g => g.gameId === gameId);
-          if (!completed) {
-            t.score = Math.max(0, (t.score || 0) - 5);
-            stolen += 5;
+      const effect: TeamActiveEffect = {
+        id: generateId('eff'),
+        powerName: `Terminal Freeze: ${actualPowerName}`,
+        appliedByTeamId: impostor.teamCode || impostor.id,
+        appliedByTeamName: impostor.name,
+        appliedAt: new Date().toISOString(),
+        durationSeconds: 60,
+        expiresAt: now + 60000,
+        description: `❄️ ${actualPowerName} frozen for 60s by Impostor!`,
+      };
+
+      if (targetTeam) {
+        targetTeam.activeEffects = [
+          ...(targetTeam.activeEffects || []).filter(e => e.expiresAt > now),
+          effect,
+        ];
+        actionText = `❄️ IMPOSTOR POWER: ${impostor.name} FROZE ${actualPowerName} targeting ${targetTeam.name} (${targetTeam.teamCode || targetTeam.id})!`;
+      } else {
+        teams.forEach(t => {
+          if (!t.isImpostor && (t.assignedRoomName === impostor.assignedRoomName || t.assignedRoomId === impostor.assignedRoomId || t.assignedRoom === impostor.assignedRoom || (!t.assignedRoom && !impostor.assignedRoom))) {
+            t.activeEffects = [
+              ...(t.activeEffects || []).filter(e => e.expiresAt > now),
+              effect,
+            ];
           }
-        }
-      });
-      impostor.score = (impostor.score || 0) + stolen;
-      actionText = `💰 IMPOSTOR POWER: ${impostor.name} STOLE 5 points from teams playing ${actualPowerName}! (Total stolen: ${stolen})`;
+        });
+        actionText = `❄️ IMPOSTOR POWER: ${impostor.name} FROZE ${actualPowerName} across sector for 1 minute!`;
+      }
+    } else if (actionType === 'STEAL') {
+      if (targetTeam) {
+        const stolen = Math.min(10, targetTeam.score || 0);
+        targetTeam.score = Math.max(0, (targetTeam.score || 0) - stolen);
+        impostor.score = (impostor.score || 0) + stolen;
+        const effect: TeamActiveEffect = {
+          id: generateId('eff'),
+          powerName: `Point Siphon: ${actualPowerName}`,
+          appliedByTeamId: impostor.teamCode || impostor.id,
+          appliedByTeamName: impostor.name,
+          appliedAt: new Date().toISOString(),
+          durationSeconds: 30,
+          expiresAt: now + 30000,
+          description: `💰 Impostor siphoned points from your squad!`,
+        };
+        targetTeam.activeEffects = [
+          ...(targetTeam.activeEffects || []).filter(e => e.expiresAt > now),
+          effect,
+        ];
+        actionText = `💰 IMPOSTOR POWER: ${impostor.name} STOLE ${stolen} points from ${targetTeam.name} (${targetTeam.teamCode || targetTeam.id})!`;
+      } else {
+        let stolen = 0;
+        teams.forEach(t => {
+          if (!t.isImpostor && t.status !== 'eliminated') {
+            const completed = t.gamesPlayed?.some(g => g.gameId === gameId);
+            if (!completed) {
+              const deduct = Math.min(5, t.score || 0);
+              t.score = Math.max(0, (t.score || 0) - deduct);
+              stolen += deduct;
+              t.activeEffects = [
+                ...(t.activeEffects || []).filter(e => e.expiresAt > now),
+                {
+                  id: generateId('eff'),
+                  powerName: `Point Siphon: ${actualPowerName}`,
+                  appliedByTeamId: impostor.teamCode || impostor.id,
+                  appliedByTeamName: impostor.name,
+                  appliedAt: new Date().toISOString(),
+                  durationSeconds: 30,
+                  expiresAt: now + 30000,
+                  description: `💰 Impostor siphoned 5 points from your team!`,
+                }
+              ];
+            }
+          }
+        });
+        impostor.score = (impostor.score || 0) + stolen;
+        actionText = `💰 IMPOSTOR POWER: ${impostor.name} STOLE points from sector teams playing ${actualPowerName}! (Total stolen: ${stolen})`;
+      }
     } else {
-      actionText = `🔧 IMPOSTOR POWER: ${impostor.name} triggered RESET on ${actualPowerName} (No effect).`;
+      if (targetTeam) {
+        if (gameId) {
+          targetTeam.gamesPlayed = (targetTeam.gamesPlayed || []).filter(g => g.gameId !== gameId);
+        }
+        const effect: TeamActiveEffect = {
+          id: generateId('eff'),
+          powerName: `Station Reset: ${actualPowerName}`,
+          appliedByTeamId: impostor.teamCode || impostor.id,
+          appliedByTeamName: impostor.name,
+          appliedAt: new Date().toISOString(),
+          durationSeconds: 30,
+          expiresAt: now + 30000,
+          description: `🔧 Station reset on ${actualPowerName} by Impostor!`,
+        };
+        targetTeam.activeEffects = [
+          ...(targetTeam.activeEffects || []).filter(e => e.expiresAt > now),
+          effect,
+        ];
+        actionText = `🔧 IMPOSTOR POWER: ${impostor.name} RESET ${actualPowerName} progress for ${targetTeam.name}!`;
+      } else {
+        teams.forEach(t => {
+          if (!t.isImpostor) {
+            if (gameId) {
+              t.gamesPlayed = (t.gamesPlayed || []).filter(g => g.gameId !== gameId);
+            }
+          }
+        });
+        actionText = `🔧 IMPOSTOR POWER: ${impostor.name} triggered station reset on ${actualPowerName} for sector squads!`;
+      }
     }
 
     this.saveTeams(teams);
@@ -1524,11 +1638,15 @@ export const AllocationDatabase = {
       message: actionText,
       teamId: impostor.teamCode || impostor.id,
       teamName: impostor.name,
+      targetTeamId: targetTeam ? (targetTeam.teamCode || targetTeam.id) : undefined,
+      targetTeamName: targetTeam ? targetTeam.name : undefined,
+      roomId: impostor.assignedRoomId,
+      roomName: impostor.assignedRoomName,
       powerName: actualPowerName,
       severity: 'danger',
     });
 
-    return { success: true, message: actionText, log: logEntry };
+    return { success: true, message: actionText, log: logEntry, targetTeam };
   },
 
   getGamePointsConfig(): GamePointsConfig { return cachedGamePoints; },
@@ -1546,7 +1664,8 @@ export const AllocationDatabase = {
     teamIdentifier: string,
     gameId: string,
     gameTitle: string,
-    customPoints?: number
+    customPoints?: number,
+    rawScore?: number
   ): { success: boolean; team?: Team; pointsAwarded: number; newScore: number } {
     const teams = this.getTeams();
     const config = this.getGamePointsConfig();
@@ -1568,7 +1687,7 @@ export const AllocationDatabase = {
       gameId,
       gameTitle,
       pointsAwarded,
-      score: rawScore,
+      score: rawScore ?? pointsAwarded,
       timestamp: new Date().toISOString(),
     };
 
@@ -1723,6 +1842,7 @@ export const AllocationDatabase = {
           assignedZone: t.assigned_zone || undefined,
           isImpostor: !!t.is_impostor,
           impostorPlayerName: t.impostor_player_name || undefined,
+          sabotagesAvailable: t.sabotages_available ?? (t.is_impostor ? 3 : 0),
           powerPorts: t.power_ports || (t.is_impostor ? createDefaultPowerPorts() : undefined),
           activeEffects: t.active_effects || [],
           gamesPlayed: t.games_played || t.gamesPlayed || [],

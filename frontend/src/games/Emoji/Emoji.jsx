@@ -65,19 +65,23 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
   const [showUnlockModal, setShowUnlockModal] = useState(null);
   const [localWins, setLocalWins] = useState(0);
   const [awardNotice, setAwardNotice] = useState('');
+  const [isStationFrozen, setIsStationFrozen] = useState(false);
+  const [freezeRemaining, setFreezeRemaining] = useState(0);
 
-  const [teamScore, setTeamScore] = useState(0);
   useEffect(() => {
-    try {
-      const sessionRaw = localStorage.getItem('nexus_player_session');
-      if (sessionRaw) {
-        const session = JSON.parse(sessionRaw);
-        if (session?.teamId) {
-           const team = AllocationDatabase.getTeams().find(t => t.id === session.teamId);
-           if (team) setTeamScore(team.score || 0);
-        }
+    const checkFreeze = () => {
+      const frozen = AllocationDatabase.getFrozenGames();
+      const freezeTime = frozen['emoji'] || 0;
+      if (freezeTime > Date.now()) {
+        setIsStationFrozen(true);
+        setFreezeRemaining(Math.ceil((freezeTime - Date.now()) / 1000));
+      } else {
+        setIsStationFrozen(false);
       }
-    } catch(e) {}
+    };
+    checkFreeze();
+    const interval = setInterval(checkFreeze, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const inputRef = useRef(null);
@@ -145,8 +149,7 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
             const res = AllocationDatabase.recordGameCompletion(
               session.teamId,
               'emoji',
-              'Emoji Decoder',
-              10
+              'Emoji Decoder'
             );
             if (res.success) {
               setAwardNotice(`✅ MISSION ACCOMPLISHED! Emoji clues decoded for Team ${session.teamName || session.teamId}. Logged to central control.`);
@@ -204,9 +207,22 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
       /* WRAPPER ADDED HERE */
       <div className="emoji-game-wrapper">
         <header style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 20px', width: '100%', position: 'absolute', top: 0, left: 0, zIndex: 100 }}>
-          <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back</button>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100 }}>Score: {teamScore}</div>
+          <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back to Mission Deck</button>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100, letterSpacing: '1px' }}>TERMINAL: EMOJI DECODER</div>
         </header>
+
+        {isStationFrozen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '20px' }}>
+            <div style={{ background: '#0f172a', border: '2px solid #22d3ee', padding: '32px', borderRadius: '16px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>❄️</div>
+              <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#67e8f9', marginBottom: '8px' }}>STATION FROZEN BY IMPOSTOR</h2>
+              <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px' }}>Central terminal sabotaged. Rebooting in {freezeRemaining}s...</p>
+              <button onClick={() => navigate('/player')} style={{ background: '#0891b2', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                Return to Mission Deck
+              </button>
+            </div>
+          </div>
+        )}
         <div className="app-container">
           <div className="intro-card">
             <div className="intro-content">
@@ -228,8 +244,8 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
       /* WRAPPER ADDED HERE */
       <div className="emoji-game-wrapper">
         <header style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 20px', width: '100%', position: 'absolute', top: 0, left: 0, zIndex: 100 }}>
-          <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back</button>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100 }}>Score: {teamScore}</div>
+          <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back to Mission Deck</button>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100, letterSpacing: '1px' }}>TERMINAL: EMOJI DECODER</div>
         </header>
         <div className="app-container">
           <div className="game-card">
@@ -256,9 +272,22 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
     /* WRAPPER ADDED HERE */
     <div className="emoji-game-wrapper">
       <header style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 20px', width: '100%', position: 'absolute', top: 0, left: 0, zIndex: 100 }}>
-        <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back</button>
-        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100 }}>Score: {teamScore}</div>
+        <button onClick={() => navigate('/player')} style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #4ade80', borderRadius: '4px', cursor: 'pointer', zIndex: 100 }}>← Back to Mission Deck</button>
+        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#4ade80', background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', zIndex: 100, letterSpacing: '1px' }}>TERMINAL: EMOJI DECODER</div>
       </header>
+
+      {isStationFrozen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '20px' }}>
+          <div style={{ background: '#0f172a', border: '2px solid #22d3ee', padding: '32px', borderRadius: '16px', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>❄️</div>
+            <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#67e8f9', marginBottom: '8px' }}>STATION FROZEN BY IMPOSTOR</h2>
+            <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px' }}>Central terminal sabotaged. Rebooting in {freezeRemaining}s...</p>
+            <button onClick={() => navigate('/player')} style={{ background: '#0891b2', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+              Return to Mission Deck
+            </button>
+          </div>
+        </div>
+      )}
       <div className="app-container">
         <div className="game-card" onClick={() => inputRef.current?.focus()}>
 
