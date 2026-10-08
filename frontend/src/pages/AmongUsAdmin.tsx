@@ -183,14 +183,12 @@ export default function AmongUsAdmin() {
     setPowerLibrary(AllocationDatabase.getPowerLibrary());
 
     // Background sync from Supabase if connected
-    AllocationDatabase.syncAllFromSupabase().then(res => {
-      if (res.roomsCount > 0 || res.teamsCount > 0) {
-        setRooms(AllocationDatabase.getRooms());
-        setTeams(AllocationDatabase.getTeams());
-        setStaffUsers(AllocationDatabase.getStaffUsers());
-        setActivityLogs(AllocationDatabase.getLogs());
-        setPowerLibrary(AllocationDatabase.getPowerLibrary());
-      }
+    AllocationDatabase.syncAllFromSupabase().then(() => {
+      setRooms(AllocationDatabase.getRooms());
+      setTeams(AllocationDatabase.getTeams());
+      setStaffUsers(AllocationDatabase.getStaffUsers());
+      setActivityLogs(AllocationDatabase.getLogs());
+      setPowerLibrary(AllocationDatabase.getPowerLibrary());
     }).catch(() => {});
 
     // Auto-poll logs and teams so live player actions & power activations display immediately
@@ -468,7 +466,7 @@ export default function AmongUsAdmin() {
 
   const handleExportLogsCSV = () => {
     const rows = [
-      ['Timestamp', 'Type', 'Severity', 'Team ID', 'Team Name', 'Room Name', 'Message'],
+      ['Timestamp', 'Type', 'Severity', 'Team ID', 'Team Name', 'Game Name', 'Message'],
     ];
 
     activityLogs.forEach(l => {
@@ -526,14 +524,17 @@ export default function AmongUsAdmin() {
   // ROOM CRUD
   // -------------------------------------------------------------
   const openAddRoom = () => {
-    setEditingRoom(null);
-    setRoomForm({
-      name: `Room ${rooms.length + 1}`,
-      zone: 'Zone A',
+    const created = AllocationDatabase.createRoom({
+      name: `Game ${rooms.length + 1}`,
+      zone: '-',
+      capacity: 20,
       pocName: '',
       pocContact: '',
+      pocEmail: '',
+      notes: ''
     });
-    setRoomModalOpen(true);
+    setRooms(AllocationDatabase.getRooms());
+    notify(`Created Game ${rooms.length + 1}`);
   };
 
   const openEditRoom = (room: RoomRecord) => {
@@ -877,7 +878,7 @@ export default function AmongUsAdmin() {
   // -------------------------------------------------------------
   const handleExportCSV = () => {
     const rows = [
-      ['Room Name', 'Zone', 'POC In-Charge', 'POC Phone', 'Team ID', 'Team Name', 'Player Name', 'Player Phone'],
+      ['Game Name', 'Zone', 'POC In-Charge', 'POC Phone', 'Team ID', 'Team Name', 'Player Name', 'Player Phone'],
     ];
 
     teams.forEach(t => {
@@ -1206,7 +1207,7 @@ export default function AmongUsAdmin() {
             >
               <div className="flex items-center gap-3">
                 <Layers className="w-4 h-4" />
-                <span>1. Room Allocation</span>
+                <span>1. Game Allocation</span>
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${activeTab === 'allocation' ? 'bg-neutral-200 text-black' : 'bg-neutral-800 text-neutral-400'}`}>
                 {rooms.length}
@@ -1240,7 +1241,7 @@ export default function AmongUsAdmin() {
             >
               <div className="flex items-center gap-3">
                 <Building className="w-4 h-4" />
-                <span>3. Rooms & POCs</span>
+                <span>3. Game Management</span>
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${activeTab === 'rooms' ? 'bg-neutral-200 text-black' : 'bg-neutral-800 text-neutral-400'}`}>
                 {rooms.length}
@@ -1258,7 +1259,7 @@ export default function AmongUsAdmin() {
             >
               <div className="flex items-center gap-3">
                 <Gamepad2 className="w-4 h-4 text-emerald-400" />
-                <span>4. Game Points & Ranks</span>
+                <span>4. Minigames & Points</span>
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${activeTab === 'games' ? 'bg-neutral-200 text-black' : 'bg-neutral-800 text-neutral-400'}`}>
                 Leaderboard
@@ -1344,10 +1345,10 @@ export default function AmongUsAdmin() {
               </button>
               <div>
                 <span className="font-bold text-sm sm:text-base block tracking-tight uppercase">
-                  {activeTab === 'allocation' && '1. Room Allocation'}
+                  {activeTab === 'allocation' && '1. Game Allocation'}
                   {activeTab === 'teams' && '2. Teams & Rosters'}
-                  {activeTab === 'rooms' && '3. Event Rooms & POCs'}
-                  {activeTab === 'games' && '4. Station Game Points & Live Leaderboard'}
+                  {activeTab === 'rooms' && '3. Game Management'}
+                  {activeTab === 'games' && '4. Minigames & Points'}
                   {activeTab === 'users' && '5. Admin User Panel'}
                   {activeTab === 'logs' && '6. Audit & Activity Logs'}
                 </span>
@@ -1418,6 +1419,15 @@ export default function AmongUsAdmin() {
 
 
                     <button
+                      onClick={handleRollAllRoomImpostors}
+                      className="px-3.5 py-2 bg-neutral-900 text-white hover:bg-black rounded-lg font-semibold text-xs transition flex items-center gap-1.5 shadow-sm active:scale-95 border border-neutral-700 cursor-pointer"
+                      title="Automatically roll 1 random Impostor for each game that lacks one"
+                    >
+                      <Dices className="w-3.5 h-3.5 text-red-400" />
+                      <span>Roll All Impostors</span>
+                    </button>
+
+                    <button
                       onClick={handleResetAll}
                       className="px-3 py-2 border border-neutral-300 hover:border-black rounded-lg font-medium text-xs transition text-neutral-700 hover:text-black active:scale-95 cursor-pointer"
                     >
@@ -1462,6 +1472,28 @@ export default function AmongUsAdmin() {
                       }`}
                     >
                       All ({rooms.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAllocationFilter('infiltrated')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                        allocationFilter === 'infiltrated'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                      }`}
+                    >
+                      ⚡ Infiltrated ({infiltratedCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAllocationFilter('vacant')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                        allocationFilter === 'vacant'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                      }`}
+                    >
+                      ⚠️ Needs Impostor ({needsImpostorCount})
                     </button>
 
                     <button
@@ -1623,11 +1655,11 @@ export default function AmongUsAdmin() {
                           </div>
                         </div>
 
-                        {/* Teams in Room */}
+                        {/* Teams in Game */}
                         <div className="space-y-2 mt-3 flex-1">
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider block">
-                              Teams in Room ({roomTeams.length})
+                              Teams in Game ({roomTeams.length})
                             </span>
                             <span className="text-[10px] font-mono text-neutral-400">
                               {totalPlayersInRoom} players
@@ -1643,7 +1675,11 @@ export default function AmongUsAdmin() {
                               {roomTeams.map(t => (
                                 <div
                                   key={t.id}
-                                  className="p-2.5 border rounded-lg text-xs space-y-1.5 transition border-neutral-200 bg-neutral-50 text-black hover:border-neutral-300"
+                                  className={`p-2.5 border rounded-lg text-xs space-y-1.5 transition ${
+                                    t.isImpostor
+                                      ? 'border-neutral-900 bg-neutral-900 text-white shadow-sm'
+                                      : 'border-neutral-200 bg-neutral-50 text-black hover:border-neutral-300'
+                                  }`}
                                 >
                                   <div className="flex items-center justify-between font-semibold">
                                     <div className="flex items-center gap-1.5 flex-wrap min-w-0">
@@ -1651,13 +1687,32 @@ export default function AmongUsAdmin() {
                                       <span className={`font-mono text-[10px] px-1 py-0.2 rounded font-bold ${t.isImpostor ? 'bg-neutral-800 text-neutral-300' : 'bg-neutral-200 text-neutral-700'}`}>
                                         {t.teamCode || t.id}
                                       </span>
+                                      {t.isImpostor ? (
+                                        <span className="px-1.5 py-0.5 bg-red-600 text-white font-bold text-[9px] rounded uppercase tracking-wider flex items-center gap-0.5">
+                                          <Skull className="w-2.5 h-2.5" />
+                                          IMPOSTOR
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 border border-neutral-300 bg-white text-neutral-700 text-[9px] rounded uppercase font-medium">
+                                          Crewmate
+                                        </span>
+                                      )}
                                       </div>
 
                                       <div className="flex items-center gap-1 shrink-0">
-
+                                      <button
+                                        onClick={() => handleToggleTeamImpostor(t.id, t.isImpostor)}
+                                        className={`text-[10px] px-2 py-0.5 rounded border transition font-medium cursor-pointer ${
+                                          t.isImpostor
+                                            ? 'border-neutral-700 hover:border-neutral-500 text-neutral-300'
+                                            : 'border-neutral-300 hover:border-black text-black bg-white'
+                                        }`}
+                                      >
+                                        {t.isImpostor ? 'Make Crew' : 'Make Impostor'}
+                                      </button>
                                       <button
                                         onClick={() => handleAssignTeamToRoom(t.id, 'unassigned')}
-                                        title="Remove squad from this room"
+                                        title="Remove squad from this game"
                                         className={`text-[11px] px-1.5 py-0.5 hover:underline cursor-pointer ${
                                           t.isImpostor ? 'text-neutral-400 hover:text-white' : 'text-neutral-500 hover:text-black'
                                         }`}
@@ -1836,6 +1891,29 @@ export default function AmongUsAdmin() {
                         >
                           <span>± Pts</span>
                         </button>
+                        <button
+                          onClick={() => {
+                            const current = team.sabotagesAvailable || 0;
+                            const newVal = window.prompt(`Update Sabotages for ${team.name} (Current: ${current}):`, current.toString());
+                            if (newVal !== null) {
+                              const parsed = parseInt(newVal, 10);
+                              if (!isNaN(parsed)) {
+                                const tIndex = teams.findIndex(t => t.id === team.id);
+                                if (tIndex > -1) {
+                                  const newTeams = [...teams];
+                                  newTeams[tIndex].sabotagesAvailable = parsed;
+                                  AllocationDatabase.saveTeams(newTeams);
+                                  setTeams(newTeams);
+                                }
+                              }
+                            }
+                          }}
+                          className="px-2.5 py-1 border border-neutral-300 hover:border-black rounded text-xs font-medium transition flex items-center gap-1 text-neutral-700 hover:text-black bg-white"
+                          title="Adjust Sabotages Available"
+                        >
+                          <span>± Sabotages</span>
+                        </button>
+
 
                         <button
                           onClick={() => openEditTeam(team)}
@@ -1912,7 +1990,7 @@ export default function AmongUsAdmin() {
                 className="px-3.5 py-2 bg-black text-white hover:bg-neutral-800 rounded-md text-xs font-medium transition flex items-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Room</span>
+                <span>Add Game</span>
               </button>
             </div>
 
@@ -2563,7 +2641,7 @@ export default function AmongUsAdmin() {
 
             <form onSubmit={handleSaveRoom} className="space-y-3">
               <div className="space-y-1">
-                <label className="block text-neutral-700 font-medium text-xs">Room Name</label>
+                <label className="block text-neutral-700 font-medium text-xs">Game Name</label>
                 <input
                   type="text"
                   value={roomForm.name}
@@ -3373,7 +3451,7 @@ export default function AmongUsAdmin() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between border-b border-neutral-200 pb-1.5">
                   <span className="font-bold text-xs uppercase tracking-wider">
-                    Teams in this Room ({roomTeams.length}):
+                    Teams in this Game ({roomTeams.length}):
                   </span>
                   <span className="text-[11px] text-neutral-500">
                     {totalPlayersInRoom} individual players
@@ -3382,7 +3460,7 @@ export default function AmongUsAdmin() {
 
                 {roomTeams.length === 0 ? (
                   <div className="p-6 border border-dashed border-neutral-300 rounded-lg text-center text-neutral-500 text-xs">
-                    No teams currently assigned to this room.
+                    No teams currently assigned to this game.
                   </div>
                 ) : (
                   <div className="space-y-2.5">

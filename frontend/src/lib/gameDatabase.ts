@@ -310,14 +310,13 @@ async function syncTeamsToSupabase(teams: Team[]) {
         })),
         updated_at: new Date().toISOString(),
       };
-      if (isUUID(t.id)) {
-        row.id = t.id;
-      }
+      row.id = t.id;
       return row;
     });
-    await supabase.from('teams').upsert(payload, { onConflict: 'name' });
+    const { error } = await supabase.from('teams').upsert(payload, { onConflict: 'id' });
+    if (error) console.error('Supabase team upsert error:', error);
   } catch (err) {
-    // Graceful offline/network fallback
+    console.error('Failed to sync teams:', err);
   }
 }
 
@@ -336,9 +335,7 @@ async function syncStaffToSupabase(staff: AdminUser[]) {
         password: s.password || 'Nexus@123',
         updated_at: new Date().toISOString(),
       };
-      if (isUUID(s.id)) {
-        row.id = s.id;
-      }
+      row.id = s.id;
       return row;
     });
     const { error } = await supabase.from('admin_users').upsert(payload, { onConflict: 'username' });
@@ -390,7 +387,33 @@ async function syncLogToSupabase(log: ActivityLogItem) {
   }
 }
 
+
+let cachedRooms: RoomRecord[] = [];
+let cachedTeams: Team[] = [];
+let cachedStaff: AdminUser[] = [];
+let cachedPowers: ImpostorPowerPort[] = [];
+let cachedLogs: ActivityLogItem[] = [];
+let frozenGames: Record<string, number> = {};
+let cachedGamePoints: GamePointsConfig = { ...DEFAULT_GAME_POINTS };
+let isLoaded = false;
+
 export const AllocationDatabase = {
+  isLoaded: () => isLoaded,
+  setLoaded: (val: boolean) => { isLoaded = val; },
+  getFrozenGames(): Record<string, number> {
+    try {
+      const stored = localStorage.getItem('nexus_frozen_games');
+      if (stored) return JSON.parse(stored);
+    } catch(e) {}
+    return frozenGames;
+  },
+  freezeGame(gameId: string, durationMs: number): void {
+    const current = this.getFrozenGames();
+    current[gameId] = Date.now() + durationMs;
+    frozenGames = current;
+    localStorage.setItem('nexus_frozen_games', JSON.stringify(current));
+  },
+
   getCrewmateGames(): CrewmateGame[] {
     return CREWMATE_GAMES.map(game => ({ ...game }));
   },
@@ -398,31 +421,9 @@ export const AllocationDatabase = {
   // -------------------------------------------------------------
   // ROOMS & ZONES MANAGEMENT
   // -------------------------------------------------------------
-  getRooms(): RoomRecord[] {
-    try {
-      const stored = localStorage.getItem(ROOMS_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse stored rooms from localStorage', e);
-    }
-    // Initialize with default rooms
-    localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(INITIAL_ROOMS));
-    return INITIAL_ROOMS;
-  },
+  getRooms(): RoomRecord[] { return cachedRooms; },
 
-  saveRooms(rooms: RoomRecord[]): void {
-    try {
-      localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(rooms));
-    } catch (e) {
-      console.error('Failed to save rooms to localStorage', e);
-    }
-    syncRoomsToSupabase(rooms).catch(() => {});
-  },
+  saveRooms(rooms: RoomRecord[]): void { cachedRooms = rooms; syncRoomsToSupabase(rooms).catch(() => {}); },
 
   createRoom(room: Omit<RoomRecord, 'id'>): RoomRecord {
     const rooms = this.getRooms();
@@ -478,6 +479,11 @@ export const AllocationDatabase = {
     const rooms = this.getRooms();
     const updated = rooms.filter(r => r.id !== id);
     this.saveRooms(updated);
+    if (supabase) {
+      supabase.from('rooms').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete room:', error);
+      });
+    }
 
     // Unassign teams and players that were in this room
     const teams = this.getTeams();
@@ -511,51 +517,9 @@ export const AllocationDatabase = {
   // -------------------------------------------------------------
   // TEAMS & PLAYERS MANAGEMENT
   // -------------------------------------------------------------
-  getTeams(): Team[] {
-    try {
-      const stored = localStorage.getItem(TEAMS_STORAGE_KEY);
-      if (stored) {
-        const parsed: Team[] = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          const now = Date.now();
-          return parsed.map((t, idx) => {
-            const isImp = !!t.isImpostor;
-            const powerPorts = isImp
-              ? (t.powerPorts && t.powerPorts.length === 3 ? t.powerPorts : createDefaultPowerPorts())
-              : t.powerPorts;
-            const activeEffects = t.activeEffects ? t.activeEffects.filter(e => e.expiresAt > now) : [];
-            return {
-              ...t,
-              teamCode: t.teamCode || `NX-T${idx + 1}`,
-              memberDetails: normalizeTeamMembers(t),
-              powerPorts,
-              activeEffects,
-            };
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse stored teams from localStorage', e);
-    }
-    // Initialize with default teams
-    const initialized = INITIAL_ADMIN_TEAMS.map((t, idx) => ({
-      ...t,
-      teamCode: t.teamCode || `NX-T${idx + 1}`,
-      memberDetails: normalizeTeamMembers(t),
-      powerPorts: t.isImpostor ? createDefaultPowerPorts() : undefined,
-    }));
-    localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(initialized));
-    return initialized;
-  },
+  getTeams(): Team[] { return cachedTeams; },
 
-  saveTeams(teams: Team[]): void {
-    try {
-      localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(teams));
-    } catch (e) {
-      console.error('Failed to save teams to localStorage', e);
-    }
-    syncTeamsToSupabase(teams).catch(() => {});
-  },
+  saveTeams(teams: Team[]): void { cachedTeams = teams; syncTeamsToSupabase(teams).catch(() => {}); },
 
   createTeam(teamData: {
     name: string;
@@ -635,6 +599,11 @@ export const AllocationDatabase = {
     const teams = this.getTeams();
     const updated = teams.filter(t => t.id !== id);
     this.saveTeams(updated);
+    if (supabase) {
+      supabase.from('teams').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete team:', error);
+      });
+    }
     return updated;
   },
 
@@ -886,50 +855,9 @@ export const AllocationDatabase = {
   // -------------------------------------------------------------
   // STAFF & USER MANAGEMENT (MASTER ADMIN, SUB-ADMIN, MODERATOR)
   // -------------------------------------------------------------
-  getStaffUsers(): AdminUser[] {
-    try {
-      const stored = localStorage.getItem(STAFF_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          // Always ensure the root master admin exists in the list
-          const hasRoot = parsed.some(u => isRootMasterAccount(u));
-          if (!hasRoot) {
-            const rootAccount = INITIAL_STAFF_USERS.find(u => isRootMasterAccount(u));
-            if (rootAccount) {
-              parsed.unshift(rootAccount);
-            }
-          }
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse staff users from localStorage', e);
-    }
-    try {
-      const sanitizedInitial = INITIAL_STAFF_USERS.map(({ password: _pwd, ...rest }) => rest);
-      localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(sanitizedInitial));
-    } catch (e) {}
-    return INITIAL_STAFF_USERS;
-  },
+  getStaffUsers(): AdminUser[] { return cachedStaff; },
 
-  saveStaffUsers(users: AdminUser[]): void {
-    let finalUsers = [...users];
-    try {
-      // Ensure root master account is NEVER deleted or dropped, even if saving a filtered list
-      const currentStaff = this.getStaffUsers();
-      const rootAccount = currentStaff.find(u => isRootMasterAccount(u)) || INITIAL_STAFF_USERS.find(u => isRootMasterAccount(u));
-      if (rootAccount && !finalUsers.some(u => isRootMasterAccount(u))) {
-        finalUsers.unshift(rootAccount);
-      }
-      // Never persist cleartext passwords in browser client storage (CWE-312 / CodeQL Alert #11)
-      const sanitizedUsers = finalUsers.map(({ password: _pwd, ...rest }) => rest);
-      localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(sanitizedUsers));
-    } catch (e) {
-      console.error('Failed to save staff users to localStorage', e);
-    }
-    syncStaffToSupabase(finalUsers).catch(() => {});
-  },
+  saveStaffUsers(users: AdminUser[]): void { const finalUsers = [...users]; const rootAccount = cachedStaff.find(u => isRootMasterAccount(u)); if (rootAccount && !finalUsers.some(u => isRootMasterAccount(u))) { finalUsers.unshift(rootAccount); } cachedStaff = finalUsers; syncStaffToSupabase(finalUsers).catch(() => {}); },
 
   createStaffUser(user: Omit<AdminUser, 'id'>): AdminUser {
     const cleanUsername = (user.username || '').trim().toLowerCase();
@@ -1532,7 +1460,7 @@ export const AllocationDatabase = {
 
   triggerPower(
     impostorTeamId: string,
-    powerName: string,
+    powerNameCombo: string,
     targetTeamId?: string
   ): { success: boolean; message: string; log?: ActivityLogItem; targetTeam?: Team } {
     const teams = this.getTeams();
@@ -1540,75 +1468,70 @@ export const AllocationDatabase = {
       t => t.id === impostorTeamId || t.teamCode?.toUpperCase() === impostorTeamId.toUpperCase()
     );
 
-    if (!impostor) {
-      return { success: false, message: 'Impostor team not found.' };
+    if (!impostor) return { success: false, message: 'Impostor team not found.' };
+
+    const parts = powerNameCombo.split('_');
+    const actualPowerName = parts[0];
+    const actionType = parts.length > 1 ? parts[1] : 'FREEZE';
+
+    if ((impostor.sabotagesAvailable || 0) <= 0) {
+      return { success: false, message: 'No sabotages available.' };
     }
 
-    let targetTeam: Team | undefined;
-    if (targetTeamId) {
-      targetTeam = teams.find(
-        t => t.id === targetTeamId || t.teamCode?.toUpperCase() === targetTeamId.toUpperCase()
-      );
+    const hasPower = impostor.powerPorts?.some(p => p.name === actualPowerName && p.status !== 'disabled');
+    if (!hasPower) {
+      return { success: false, message: 'Power not enabled or available for this team.' };
     }
 
-    const duration = 40;
-    if (targetTeam) {
-      const newEffect: TeamActiveEffect = {
-        id: generateId('eff'),
-        powerName: powerName,
-        appliedByTeamId: impostor.teamCode || impostor.id,
-        appliedByTeamName: impostor.name,
-        appliedAt: new Date().toISOString(),
-        durationSeconds: duration,
-        expiresAt: Date.now() + duration * 1000,
-        description: `Targeted by Impostor power: ${powerName}`,
-      };
+    const powerToGameId: Record<string, string> = {
+      'Wordle Sabotage': 'wordle',
+      'Emoji Sabotage': 'emoji',
+      'Meme Sabotage': 'memedecoder',
+      'MonkeyType Sabotage': 'monkeytype',
+      'Pacman Sabotage': 'pacman'
+    };
+    const gameId = powerToGameId[actualPowerName];
+    let actionText = '';
 
-      const now = Date.now();
-      targetTeam.activeEffects = [
-        ...(targetTeam.activeEffects || []).filter(e => e.expiresAt > now),
-        newEffect,
-      ];
+    impostor.sabotagesAvailable = (impostor.sabotagesAvailable || 0) - 1;
+
+    if (actionType === 'FREEZE') {
+      if (gameId) {
+        this.freezeGame(gameId, 60000); // 1 minute
+      }
+      actionText = `❄️ IMPOSTOR POWER: ${impostor.name} FROZE ${actualPowerName} for 1 minute!`;
+    } else if (actionType === 'STEAL') {
+      let stolen = 0;
+      teams.forEach(t => {
+        if (!t.isImpostor && t.status !== 'eliminated') {
+          const completed = t.gamesPlayed?.some(g => g.gameId === gameId);
+          if (!completed) {
+            t.score = Math.max(0, (t.score || 0) - 5);
+            stolen += 5;
+          }
+        }
+      });
+      impostor.score = (impostor.score || 0) + stolen;
+      actionText = `💰 IMPOSTOR POWER: ${impostor.name} STOLE 5 points from teams playing ${actualPowerName}! (Total stolen: ${stolen})`;
+    } else {
+      actionText = `🔧 IMPOSTOR POWER: ${impostor.name} triggered RESET on ${actualPowerName} (No effect).`;
     }
 
     this.saveTeams(teams);
-
-    const actionText = targetTeam
-      ? `⚡ IMPOSTOR POWER: ${impostor.name} (${impostor.teamCode || impostor.id}) activated [${powerName}] targeting ${targetTeam.name} (${targetTeam.teamCode || targetTeam.id}) in ${impostor.assignedRoomName || 'Sector'}! Effect active for ${duration}s.`
-      : `⚡ IMPOSTOR POWER: ${impostor.name} (${impostor.teamCode || impostor.id}) activated [${powerName}] in ${impostor.assignedRoomName || 'Sector'}!`;
 
     const logEntry = this.addLog({
       type: 'power',
       message: actionText,
       teamId: impostor.teamCode || impostor.id,
       teamName: impostor.name,
-      targetTeamId: targetTeam ? (targetTeam.teamCode || targetTeam.id) : undefined,
-      targetTeamName: targetTeam ? targetTeam.name : undefined,
-      roomId: impostor.assignedRoomId,
-      roomName: impostor.assignedRoomName,
-      powerName: powerName,
+      powerName: actualPowerName,
       severity: 'danger',
     });
 
-    return {
-      success: true,
-      message: actionText,
-      log: logEntry,
-      targetTeam,
-    };
+    return { success: true, message: actionText, log: logEntry };
   },
 
-  getGamePointsConfig(): GamePointsConfig {
-    try {
-      const stored = localStorage.getItem(GAME_POINTS_STORAGE_KEY);
-      if (stored) {
-        return { ...DEFAULT_GAME_POINTS, ...JSON.parse(stored) };
-      }
-    } catch (e) {
-      console.warn('Failed to parse game points config from localStorage', e);
-    }
-    return { ...DEFAULT_GAME_POINTS };
-  },
+  getGamePointsConfig(): GamePointsConfig { return cachedGamePoints; },
 
   saveGamePointsConfig(config: GamePointsConfig): GamePointsConfig {
     try {
@@ -1623,11 +1546,11 @@ export const AllocationDatabase = {
     teamIdentifier: string,
     gameId: string,
     gameTitle: string,
-    rawScore?: number
+    customPoints?: number
   ): { success: boolean; team?: Team; pointsAwarded: number; newScore: number } {
     const teams = this.getTeams();
     const config = this.getGamePointsConfig();
-    const pointsAwarded = (config as any)[gameId] ?? 50;
+    const pointsAwarded = customPoints !== undefined ? customPoints : ((config as any)[gameId] ?? 50);
 
     const team = teams.find(
       t =>
@@ -1653,6 +1576,10 @@ export const AllocationDatabase = {
     team.score = newScore;
     team.tasksCompleted = (team.tasksCompleted || 0) + 1;
     team.gamesPlayed = [record, ...(team.gamesPlayed || [])];
+    
+    if (team.isImpostor) {
+      team.sabotagesAvailable = (team.sabotagesAvailable || 0) + 1;
+    }
 
     this.saveTeams(teams);
 
@@ -1773,7 +1700,7 @@ export const AllocationDatabase = {
           pocEmail: r.poc_email || undefined,
           notes: r.notes || undefined,
         }));
-        localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(mappedRooms));
+        cachedRooms = mappedRooms;
         roomsCount = mappedRooms.length;
       }
 
@@ -1803,7 +1730,7 @@ export const AllocationDatabase = {
           memberDetails: Array.isArray(t.members) ? t.members.map((m: any, idx: number) => typeof m === 'string' ? { id: `m-${idx}`, name: m } : m) : [],
           createdAt: t.created_at || new Date().toISOString(),
         }));
-        localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(mappedTeams));
+        cachedTeams = mappedTeams;
         teamsCount = mappedTeams.length;
       }
 
@@ -1824,14 +1751,14 @@ export const AllocationDatabase = {
         }));
         // Never persist cleartext passwords in browser client storage (CWE-312 / CodeQL Alert #12)
         const sanitizedStaff = mappedStaff.map(({ password: _pwd, ...rest }) => rest);
-        localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(sanitizedStaff));
+        cachedStaff = sanitizedStaff;
         staffCount = mappedStaff.length;
       }
 
       // 4. Fetch Powers Library
       const { data: powersData, error: powersErr } = await supabase.from('powers_library').select('*');
       if (!powersErr && powersData && powersData.length > 0) {
-        const mappedPowers: Omit<ImpostorPowerPort, 'port'>[] = powersData.map((p: any) => ({
+        const mappedPowers: ImpostorPowerPort[] = powersData.map((p: any) => ({
           id: p.id,
           name: p.name,
           description: p.description,
@@ -1839,8 +1766,9 @@ export const AllocationDatabase = {
           durationSeconds: p.duration_seconds || 20,
           targetRequired: !!p.target_required,
           status: p.status || 'ready',
+          port: 1, // Default port since it's required by the type
         }));
-        localStorage.setItem(POWERS_STORAGE_KEY, JSON.stringify(mappedPowers));
+        cachedPowers = mappedPowers;
         powersCount = mappedPowers.length;
       }
     } catch (e) {

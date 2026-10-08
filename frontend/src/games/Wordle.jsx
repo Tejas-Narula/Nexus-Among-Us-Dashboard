@@ -34,6 +34,7 @@ export default function WordleClone({ onUnlock = () => {} }) {
   useEffect(() => {
     const availableWords = WORDS.filter(word => !usedWords.includes(word));
     const randomWord = availableWords[Math.floor(Math.random() * availableWords.length)];
+    console.log('WORDLE ANSWER:', randomWord);
     setTargetWord(randomWord);
     setUsedWords(prev => [...prev, randomWord]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -63,9 +64,10 @@ export default function WordleClone({ onUnlock = () => {} }) {
       if (sessionRaw) {
         const session = JSON.parse(sessionRaw);
         if (session?.teamId) {
-          const res = AllocationDatabase.markGameCompleted(session.teamId, 'wordle', 5);
-          if (res) {
+          const res = AllocationDatabase.recordGameCompletion(session.teamId, 'wordle', 'Wordle', 10);
+          if (res.success) {
             setAwardNotice(`✅ MISSION ACCOMPLISHED! Wordle station verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
+            setTimeout(() => navigate('/player'), 3000);
           }
         }
       }
@@ -148,10 +150,12 @@ export default function WordleClone({ onUnlock = () => {} }) {
     if (availableWords.length === 0) {
       setUsedWords([]);
       const randomWord = WORDS[Math.floor(Math.random() * WORDS.length)];
+      console.log('WORDLE ANSWER:', randomWord);
       setTargetWord(randomWord);
       setUsedWords([randomWord]);
     } else {
       const randomWord = availableWords[Math.floor(Math.random() * availableWords.length)];
+      console.log('WORDLE ANSWER:', randomWord);
       setTargetWord(randomWord);
       setUsedWords(prev => [...prev, randomWord]);
     }

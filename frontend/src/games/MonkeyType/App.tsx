@@ -43,10 +43,11 @@ const MonkeyType: React.FC = () => {
             session.teamId,
             'monkeytype',
             'Code Typer Mission',
-            Math.round(result.wpm)
+            10
           );
           if (res.success) {
             setAwardNotice(`✅ MISSION ACCOMPLISHED! Terminal code verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
+            setTimeout(() => navigate('/player'), 3000);
           }
         }
       }

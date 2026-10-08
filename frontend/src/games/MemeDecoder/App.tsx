@@ -142,10 +142,11 @@ export default function MemeDecoder() {
                 session.teamId,
                 'memedecoder',
                 'Meme Decoder Terminal',
-                finalScore
+                10
               );
               if (res.success) {
                 setAwardNotice(`✅ MISSION ACCOMPLISHED! Meme station decoded for Team ${session.teamName || session.teamId}. Logged to central control.`);
+                setTimeout(() => navigate('/player'), 3000);
               }
             }
           }

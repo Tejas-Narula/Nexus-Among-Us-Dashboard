@@ -2,87 +2,75 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AllocationDatabase } from '../lib/gameDatabase';
 import { supabase } from '../lib/supabase';
+import { Team } from '../types';
 import { IMPOSTOR_POWERS } from '../games/imposter/Imposter';
 import './Player.css';
 
-const STAR_PARTICLES = Array.from({ length: 48 }, (_, index) => ({
-  left: `${(index * 37 + 11) % 100}%`,
-  top: `${(index * 61 + 7) % 100}%`,
-  size: `${1 + (index % 3)}px`,
-  delay: `${(index % 9) * -0.7}s`,
-  duration: `${3 + (index % 5) * 0.8}s`,
-}));
-
-const CREWMATE_DRIFTERS = [
-  { top: '18%', delay: '-6s', duration: '42s', color: 'red' },
-  { top: '37%', delay: '-23s', duration: '52s', color: 'blue' },
-  { top: '69%', delay: '-14s', duration: '47s', color: 'yellow' },
-];
-
 const SABOTAGE_MAP_MARKERS = [
-  { power: IMPOSTOR_POWERS[0], label: 'W', top: '60%', left: '65%' },
-  { power: IMPOSTOR_POWERS[1], label: 'E', top: '85%', left: '60%' },
-  { power: IMPOSTOR_POWERS[2], label: 'M', top: '50%', left: '10%' },
-  { power: IMPOSTOR_POWERS[3], label: 'C', top: '40%', left: '65%' },
-  { power: IMPOSTOR_POWERS[4], label: 'P', top: '15%', left: '50%' },
+  { power: IMPOSTOR_POWERS[0], label: 'WORDLE', top: '55%', left: '60%' },
+  { power: IMPOSTOR_POWERS[1], label: 'EMOJI', top: '75%', left: '70%' },
+  { power: IMPOSTOR_POWERS[2], label: 'MEME DECODER', top: '45%', left: '20%' },
+  { power: IMPOSTOR_POWERS[3], label: 'MONKEYTYPE', top: '35%', left: '65%' },
+  { power: IMPOSTOR_POWERS[4], label: 'PACMAN', top: '20%', left: '50%' },
 ];
 
 function GameCardIcon({ gameId }: { gameId: string }) {
   const sharedProps = {
-    className: 'player-game-svg-icon',
     fill: 'none',
     stroke: 'currentColor',
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
-    strokeWidth: 1.7,
+    strokeWidth: 2,
     viewBox: '0 0 24 24',
     'aria-hidden': true as const,
+    style: { width: '28px', height: '28px' }
   };
 
   switch (gameId) {
     case 'wordle':
       return (
         <svg {...sharedProps}>
-          <rect x="3.5" y="3.5" width="7" height="7" rx="1" />
-          <rect x="13.5" y="3.5" width="7" height="7" rx="1" />
-          <rect x="3.5" y="13.5" width="7" height="7" rx="1" />
-          <path d="M15.5 17h3M17 15.5v3" />
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+          <path d="M14 14h7v7h-7z" fill="currentColor" stroke="none" opacity="0.5" />
         </svg>
       );
     case 'emoji':
       return (
         <svg {...sharedProps}>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M9 10h.01M15 10h.01M8.8 14.2c.8 1.6 1.9 2.3 3.2 2.3s2.4-.7 3.2-2.3" />
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9 10h.01M15 10h.01M8 14c1.5 2 4.5 2 6 0" />
         </svg>
       );
     case 'memedecoder':
       return (
         <svg {...sharedProps}>
-          <rect x="3.5" y="4" width="17" height="16" rx="2" />
-          <circle cx="9" cy="9" r="1.5" />
-          <path d="m5 18 5-5 3 3 2-2 4 4M14.5 8h3" />
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <path d="m4 19 5-5 3 3 2-2 6 6" />
         </svg>
       );
     case 'monkeytype':
       return (
         <svg {...sharedProps}>
-          <rect x="2.5" y="5" width="19" height="14" rx="2" />
-          <path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M8 15h8" />
+          <rect x="2" y="5" width="20" height="14" rx="2" />
+          <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 15h8" strokeWidth={3} />
         </svg>
       );
     case 'pacman':
       return (
         <svg {...sharedProps}>
-          <path d="M20.4 8.8A8.5 8.5 0 1 0 20.5 15H12V6.5a8.5 8.5 0 0 1 8.4 2.3Z" />
-          <circle cx="16.1" cy="10.1" r=".7" fill="currentColor" stroke="none" />
+          <path d="M21.2 9.4A9 9 0 1 0 21.2 14.6L12 12Z" fill="currentColor" opacity="0.3" />
+          <circle cx="16" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="20" cy="12" r="1" fill="currentColor" stroke="none" />
         </svg>
       );
     default:
       return (
         <svg {...sharedProps}>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M12 8v4l2.5 2.5" />
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v4l3 3" />
         </svg>
       );
   }
@@ -102,7 +90,6 @@ interface PlayerSession {
 export default function Player() {
   const navigate = useNavigate();
 
-  // Step 1: Immediate Synchronous Render from localStorage (0ms delay)
   const [session, setSession] = useState<PlayerSession | null>(() => {
     try {
       const raw = localStorage.getItem('nexus_player_session');
@@ -115,42 +102,39 @@ export default function Player() {
   const [statusText, setStatusText] = useState('LIVE • CONNECTED');
   const [teamScore, setTeamScore] = useState(0);
   const [completedGames, setCompletedGames] = useState<string[]>([]);
-  const [isSabotageAlertActive, setIsSabotageAlertActive] = useState(false);
-  const [sabotageAlertSequence, setSabotageAlertSequence] = useState(0);
-  const [isSabotageMapOpen, setIsSabotageMapOpen] = useState(false);
-  const sabotageAlertTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+  const [selectedGameMarker, setSelectedGameMarker] = useState<string | null>(null);
+  const [sabotagedMarkers, setSabotagedMarkers] = useState<string[]>([]);
+  const [sabotagesAvailable, setSabotagesAvailable] = useState(0);
+  const [frozenGames, setFrozenGames] = useState<Record<string, number>>({});
+  
+  const [roomTeams, setRoomTeams] = useState<Team[]>([]);
 
-  // Ensure body background is pitch black (#000000)
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const originalBg = document.body.style.backgroundColor;
-    const originalColor = document.body.style.color;
-    const originalOverflow = document.body.style.overflow;
-
-    document.body.style.backgroundColor = '#030712';
-    document.body.style.color = '#ffffff';
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.backgroundColor = originalBg;
-      document.body.style.color = originalColor;
-      document.body.style.overflow = originalOverflow;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const cards = containerRef.current.querySelectorAll('.mission-card');
+      cards.forEach((card) => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        (card as HTMLElement).style.setProperty('--mouse-x', `${x}px`);
+        (card as HTMLElement).style.setProperty('--mouse-y', `${y}px`);
+      });
     };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  useEffect(() => () => {
-    if (sabotageAlertTimeout.current) {
-      clearTimeout(sabotageAlertTimeout.current);
-    }
-  }, []);
-
-  // Redirect if not signed in
   useEffect(() => {
     if (!session) {
       navigate('/', { replace: true });
     }
   }, [session, navigate]);
 
-  // Refresh the current team's score and completed games.
   const refreshGameContext = () => {
     if (!session) return;
     const allTeams = AllocationDatabase.getTeams();
@@ -163,7 +147,14 @@ export default function Player() {
     if (myTeam) {
       setTeamScore(myTeam.score || 0);
       setCompletedGames((myTeam.gamesPlayed || []).map(g => g.gameId));
+      setSabotagesAvailable(myTeam.sabotagesAvailable || 0);
     }
+
+    const assignedRoom = session.assignedRoom || 'Room 1';
+    const teamsInRoom = allTeams.filter(t => (t.assignedRoomName || t.assignedRoom || 'Room 1') === assignedRoom);
+    setRoomTeams(teamsInRoom);
+    
+    setFrozenGames(AllocationDatabase.getFrozenGames());
   };
 
   useEffect(() => {
@@ -172,7 +163,6 @@ export default function Player() {
     return () => clearInterval(interval);
   }, [session]);
 
-  // Background sync with API or Supabase
   useEffect(() => {
     if (!session) return;
 
@@ -187,19 +177,13 @@ export default function Player() {
         const currentRaw = localStorage.getItem('nexus_player_session');
         if (!currentRaw) return;
         const creds = JSON.parse(currentRaw);
-
         let updated = false;
 
-        // Option 1: Backend API
         try {
           const res = await fetch(`${API_BASE}/teams/session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              teamId: creds.teamId,
-              phone: creds.phone,
-              playerName: creds.playerName,
-            }),
+            body: JSON.stringify({ teamId: creds.teamId, phone: creds.phone, playerName: creds.playerName }),
           });
           const result = await res.json().catch(() => null);
           if (res.ok && result?.success && result?.data) {
@@ -219,11 +203,8 @@ export default function Player() {
             setStatusText(`EVENT ${(d.eventSession?.status || 'ACTIVE').toUpperCase()}`);
             updated = true;
           }
-        } catch {
-          // Backend offline - silent fallback
-        }
+        } catch { /* empty */ }
 
-        // Option 2: Direct Supabase Cloud
         if (!updated && supabase) {
           try {
             const { data: teamRecord } = await supabase
@@ -238,20 +219,15 @@ export default function Player() {
                 ...creds,
                 teamName: teamRecord.name,
                 isImpostor: Boolean(teamRecord.is_impostor),
-                assignedRoom: teamRecord.assigned_room || teamRecord.assigned_room_name || creds.assignedRoom || 'Room 1 (Command Hub)',
+                assignedRoom: teamRecord.assigned_room || teamRecord.assigned_room_name || creds.assignedRoom || 'Room 1',
                 eventStatus: teamRecord.status || creds.eventStatus || 'active',
               };
               setSession(updatedSession);
               localStorage.setItem('nexus_player_session', JSON.stringify(updatedSession));
-              setStatusText('LIVE • CONNECTED');
-              updated = true;
+              setStatusText('SYSTEM ONLINE');
             }
-          } catch (sbEx) {
-            console.warn('Supabase session background check:', sbEx);
-          }
+          } catch (sbEx) { /* empty */ }
         }
-      } catch (err) {
-        console.warn('Failed background session check:', err);
       } finally {
         isRefreshing = false;
       }
@@ -263,198 +239,247 @@ export default function Player() {
   }, []);
 
   const isImpostor = session?.isImpostor === true;
-  const roomName = session?.assignedRoom || 'Room 1 (Command Hub)';
+  const roomName = session?.assignedRoom || 'Sector Alpha';
+  const currentRound = session?.currentRound ?? 1;
 
-  const triggerSabotageAlert = () => {
-    if (!isImpostor) return;
-    setIsSabotageAlertActive(true);
-    setSabotageAlertSequence(sequence => sequence + 1);
-
-    if (sabotageAlertTimeout.current) {
-      clearTimeout(sabotageAlertTimeout.current);
-    }
-
-    sabotageAlertTimeout.current = setTimeout(() => {
-      setIsSabotageAlertActive(false);
-      sabotageAlertTimeout.current = null;
-    }, 3000);
+  const togglePanel = () => {
+    setIsRightPanelOpen(!isRightPanelOpen);
+    if (isRightPanelOpen) setSelectedGameMarker(null);
   };
 
-  const handleSabotageClick = () => {
-    if (!isImpostor) return;
-    setIsSabotageMapOpen(true);
-    triggerSabotageAlert();
-  };
-
-  const handleMapSabotage = (powerName: string) => {
+  const handleMapSabotage = (powerName: string, actionType: string) => {
     if (!isImpostor || !session) return;
-
-    const result = AllocationDatabase.triggerPower(session.teamId, powerName);
+    const result = AllocationDatabase.triggerPower(session.teamId, `${powerName}_${actionType}`);
     if (!result.success) {
-      setStatusText(result.message);
+      alert(`SABOTAGE FAILED: ${result.message}`);
       return;
     }
+    
+    // Refresh context immediately to update sabotages count
+    refreshGameContext();
 
-    triggerSabotageAlert();
+    setSabotagedMarkers(prev => {
+        if (!prev.includes(powerName)) return [...prev, powerName];
+        return prev;
+    });
   };
 
-  // The 5 available games
   const gamesList = AllocationDatabase.getCrewmateGames();
+  const padIndex = (idx: number) => (idx + 1).toString().padStart(2, '0');
 
-  // Helper to mark a game as completed temporarily from the UI
-  // Real implementation would have the games call markGameCompleted when done.
-  const handleGameCompleteClick = (e: React.MouseEvent, gameId: string) => {
-    e.preventDefault();
-    if (session && !completedGames.includes(gameId)) {
-      AllocationDatabase.markGameCompleted(session.teamId, gameId, 5);
-      refreshGameContext();
-    }
+  const getMissionClass = (id: string) => {
+    if (id === 'wordle') return 'mission-wordle';
+    if (id === 'emoji') return 'mission-emoji';
+    if (id === 'memedecoder') return 'mission-meme';
+    if (id === 'monkeytype') return 'mission-type';
+    if (id === 'pacman') return 'mission-pacman';
+    return 'mission-type';
   };
 
   return (
-    <div className={`player-container player-space-dashboard${isImpostor && isSabotageAlertActive ? ' sabotage-alert' : ''}`}>
-      <div className="player-space-background" aria-hidden="true">
-        <div className="player-map-image" />
-        {isSabotageAlertActive && (
-          <span key={sabotageAlertSequence} className="player-sabotage-flash" />
-        )}
-        {STAR_PARTICLES.map((star, index) => (
-          <span
-            key={index}
-            className="player-star"
-            style={{
-              left: star.left,
-              top: star.top,
-              width: star.size,
-              height: star.size,
-              animationDelay: star.delay,
-              animationDuration: star.duration,
-            }}
-          />
-        ))}
-        <div className="player-reactor-glow" />
-        {CREWMATE_DRIFTERS.map((crewmate, index) => (
-          <span
-            key={index}
-            className={`player-crewmate-drifter player-crewmate-${crewmate.color}`}
-            style={{
-              top: crewmate.top,
-              animationDelay: crewmate.delay,
-              animationDuration: crewmate.duration,
-            }}
-          >
-            <span className="player-crewmate-visor" />
-          </span>
-        ))}
-      </div>
-      <div className="player-dashboard-content">
-      <header className="player-dashboard-header">
-        <img className="player-nexus-logo" src="/nexus-logo.png" alt="Nexus Logo" />
-        <div className="player-heading-copy">
-          <h1>Mini Games</h1>
-          <p>Choose a mission to begin</p>
-        </div>
-        <div className="player-score" aria-label={`Team score: ${teamScore}`}>
-          <span>Team score</span>
-          <strong>{teamScore.toLocaleString()}</strong>
-        </div>
-      </header>
+    <div className="player-container" ref={containerRef}>
+      
+      {/* Immersive Background */}
+      <div className="player-environment" aria-hidden="true"></div>
+      <div className="environment-overlay" aria-hidden="true"></div>
+      <div className="hud-scanlines" aria-hidden="true"></div>
 
-      <main className="player-games-grid" aria-label="Mini-games">
-        {gamesList.map((game, index) => {
-          const isCompleted = completedGames.includes(game.id);
-
-          return (
-            <button
-              key={game.id}
-              onClick={() => navigate(game.route)}
-              className={`player-game-card player-game-card-${index + 1}${isCompleted ? ' completed' : ''}`}
-              type="button"
-              aria-label={`Open ${game.title}`}
-            >
-              <div className="player-game-icon">
-                <GameCardIcon gameId={game.id} />
-              </div>
-              <div className="player-game-title">
-                {game.title} {isCompleted && '✓'}
-              </div>
-              <div className="player-game-description">
-                {game.description}
-              </div>
-            </button>
-          );
-        })}
-      </main>
-
-      <footer className="player-dashboard-footer">
-        <div className={`player-role-status${isImpostor ? ' impostor' : ' crewmate'}`}>
-          <span className="player-role-indicator" />
-          <span>{isImpostor ? 'Impostor' : 'Crewmate'}</span>
-          <span className="player-footer-divider">/</span>
-          <span>{roomName}</span>
-        </div>
-        <div className="player-footer-actions">
-          {isImpostor ? (
-            <>
-              <span className="player-live-status">{statusText}</span>
-              <button
-                className="player-sabotage-button"
-                type="button"
-                onClick={handleSabotageClick}
-                aria-label="Open sabotage map and trigger dashboard alert"
-              >
-                Sabotage
-                <svg className="player-sabotage-arrow" viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="M3 10h13m-5-5 5 5-5 5" />
-                </svg>
-              </button>
-            </>
-          ) : (
-            <span className="player-crew-task-status">CREW TASKS ACTIVE</span>
-          )}
-        </div>
-      </footer>
-
-      {isImpostor && isSabotageMapOpen && (
-        <div
-          className="player-sabotage-map-backdrop"
-          onClick={() => setIsSabotageMapOpen(false)}
-        >
-          <section
-            className="player-sabotage-map-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Sabotage map"
-            onClick={event => event.stopPropagation()}
-          >
-            <button
-              className="player-sabotage-map-close"
-              type="button"
-              onClick={() => setIsSabotageMapOpen(false)}
-              aria-label="Close sabotage map"
-            >
-              ×
-            </button>
-            <div className="imposter-map-container">
-              {SABOTAGE_MAP_MARKERS.map(marker => (
-                <button
-                  key={marker.power.name}
-                  className="sabotage-btn"
-                  style={{ top: marker.top, left: marker.left }}
-                  type="button"
-                  onClick={() => handleMapSabotage(marker.power.name)}
-                  aria-label={marker.power.title}
-                  title={marker.power.title}
-                >
-                  {marker.label}
-                </button>
-              ))}
+      <div className="player-viewport">
+        
+        {/* HUD Top */}
+        <header className="hud-top">
+          <div className="hud-brand">
+            <img src="/nexus-logo.png" alt="Nexus Logo" className="brand-logo" />
+            <div className={`brand-role ${isImpostor ? 'imposter' : ''}`}>
+              {isImpostor ? 'IMPOSTER' : 'CREWMATE'}
             </div>
-          </section>
-        </div>
-      )}
+          </div>
+          <div className="hud-score">
+            <span className="score-label">TEAM_SCORE</span>
+            <span className="score-value">{teamScore.toLocaleString()}</span>
+          </div>
+        </header>
+
+        {/* Tasks Arena */}
+        <main className="task-arena">
+          {gamesList.map((game, index) => {
+            const isCompleted = completedGames.includes(game.id);
+            const isFrozen = frozenGames[game.id] && frozenGames[game.id] > Date.now();
+            const missionClass = getMissionClass(game.id);
+            
+            return (
+              <div 
+                key={game.id} 
+                className={`mission-card ${missionClass} ${isCompleted ? 'completed' : ''} ${isFrozen ? 'frozen' : ''}`}
+                onClick={() => {
+                  if (!isCompleted && !isFrozen) navigate(game.route);
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="mission-header">
+                  <span className="mission-id">TSK-{padIndex(index)}</span>
+                  <div className="mission-icon">
+                    <GameCardIcon gameId={game.id} />
+                  </div>
+                </div>
+                
+                <div className="mission-body">
+                  <h3 className="mission-title">{game.title}</h3>
+                  <p className="mission-desc">{game.description}</p>
+                </div>
+                
+                <div className="mission-status">
+                  {isFrozen ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      FROZEN BY IMPOSTOR
+                    </>
+                  ) : isCompleted ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      COMPLETED
+                    </>
+                  ) : (
+                    <>
+                      INITIATE MISSION
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </main>
+
+        {/* HUD Bottom */}
+        <footer className="hud-bottom">
+          <div className="status-indicator">
+            <div className={`dot ${statusText.includes('LIVE') || statusText.includes('ONLINE') ? 'live' : ''}`}></div>
+            <span className="status-text">{statusText}</span>
+          </div>
+          <div className="location-info">
+            <h4 className="round-text">ROUND {String(currentRound).padStart(2, '0')}</h4>
+            <span className="room-text">{roomName}</span>
+          </div>
+        </footer>
 
       </div>
+
+      {/* Right Side Tactical Toggle */}
+      <button 
+        className={`tactical-toggle ${isRightPanelOpen ? 'open' : ''}`}
+        onClick={() => togglePanel()}
+        aria-label="Toggle Tactical Panel"
+      >
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" strokeWidth="2.5" width="24" height="24">
+          {isRightPanelOpen ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}
+        </svg>
+      </button>
+
+      {/* Panel Overlay (Mobile/Focus) */}
+      <div 
+        className={`panel-overlay ${isRightPanelOpen ? 'open' : ''}`} 
+        onClick={() => setIsRightPanelOpen(false)}
+      ></div>
+
+      {/* Right Tactical Panel */}
+      <aside className={`tactical-panel ${isRightPanelOpen ? 'open' : ''}`}>
+        
+        {!isImpostor ? (
+          <div className="access-denied">
+            <svg className="denied-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" strokeLinejoin="round"/>
+              <path d="M12 8v4" strokeLinecap="round"/>
+              <circle cx="12" cy="16" r="1" fill="currentColor" stroke="none" />
+            </svg>
+            <h2 className="denied-title">RESTRICTED</h2>
+            <p className="denied-text">TACTICAL MAP UNAVAILABLE</p>
+            <p className="denied-sub">Access requires Level 4 clearance. Focus on completing assigned tasks to secure the ship.</p>
+          </div>
+        ) : (
+          <div className="tactical-map-view">
+            <div className="tactical-header">
+              <h2>SHIP SURVEILLANCE</h2>
+              <p>SELECT SECTOR NODE TO INITIATE SABOTAGE</p>
+              <div className="sabotage-count">
+                SABOTAGES: <span className={sabotagesAvailable > 0 ? 'available' : 'empty'}>{sabotagesAvailable}</span>
+              </div>
+            </div>
+            
+            <div className="map-viewport">
+              <div className="map-bg"></div>
+              <div className="map-scanline"></div>
+              
+              {SABOTAGE_MAP_MARKERS.map((marker) => {
+                const isSelected = selectedGameMarker === marker.power.name;
+                const isSabotaged = sabotagedMarkers.includes(marker.power.name);
+                return (
+                  <button
+                    key={marker.power.name}
+                    className={`node-marker ${isSelected ? 'active' : ''} ${isSabotaged ? 'sabotaged' : ''}`}
+                    style={{ top: marker.top, left: marker.left }}
+                    onClick={() => setSelectedGameMarker(marker.power.name)}
+                  >
+                    {marker.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedGameMarker && (
+              <div className="target-info">
+                {(() => {
+                  const markerData = SABOTAGE_MAP_MARKERS.find(m => m.power.name === selectedGameMarker);
+                  const isSabotaged = sabotagedMarkers.includes(selectedGameMarker);
+                  return (
+                    <>
+                      <div className="target-head">
+                        <h3>{markerData?.power.title.toUpperCase()}</h3>
+                        <button className="close-target" onClick={() => setSelectedGameMarker(null)}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className="sabotage-actions-grid">
+                        <button 
+                          className={`sabotage-btn freeze ${isSabotaged ? 'disabled' : ''}`}
+                          onClick={() => handleMapSabotage(selectedGameMarker, 'FREEZE')}
+                          disabled={isSabotaged}
+                        >
+                          FREEZE
+                        </button>
+                        <button 
+                          className={`sabotage-btn steal ${isSabotaged ? 'disabled' : ''}`}
+                          onClick={() => handleMapSabotage(selectedGameMarker, 'STEAL')}
+                          disabled={isSabotaged}
+                        >
+                          STEAL
+                        </button>
+                        <button 
+                          className={`sabotage-btn reset ${isSabotaged ? 'disabled' : ''}`}
+                          onClick={() => handleMapSabotage(selectedGameMarker, 'RESET')}
+                          disabled={isSabotaged}
+                        >
+                          RESET
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+      </aside>
     </div>
   );
 }

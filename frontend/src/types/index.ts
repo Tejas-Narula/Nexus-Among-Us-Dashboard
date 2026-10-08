@@ -75,6 +75,7 @@ export interface Team {
   isImpostor?: boolean;
   impostorPlayerName?: string;
   powerPorts?: ImpostorPowerPort[]; // 3 Ports of power for Impostor teams
+  sabotagesAvailable?: number; // Added to track sabotages
   activeEffects?: TeamActiveEffect[]; // Active effects targeting this crewmate team
   gamesPlayed?: GamePlayedRecord[]; // Games completed by team members
   notes?: string;

@@ -146,10 +146,11 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
               session.teamId,
               'emoji',
               'Emoji Decoder',
-              score
+              10
             );
             if (res.success) {
               setAwardNotice(`✅ MISSION ACCOMPLISHED! Emoji clues decoded for Team ${session.teamName || session.teamId}. Logged to central control.`);
+              setTimeout(() => navigate('/player'), 3000);
             }
           }
         }
