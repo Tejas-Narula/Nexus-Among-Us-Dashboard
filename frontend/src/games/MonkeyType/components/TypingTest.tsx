@@ -80,8 +80,8 @@ const TypingTest: React.FC<TypingTestProps> = ({
     const finalWpm = calculateWpm(totalCharsRef.current - errors, timeUsed);
     const finalAccuracy = totalCharsRef.current === 0 ? 0 : Math.max(0, Math.round(((totalCharsRef.current - errors) / totalCharsRef.current) * 100));
 
-    // Threshold changed to 60 WPM
-    const passed = finalWpm >= 50 && finalAccuracy >= 75;
+    // Fair mission threshold for operatives
+    const passed = finalWpm >= 40 && finalAccuracy >= 70;
 
     onTestEnd({
       wpm: finalWpm,

@@ -152,8 +152,8 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
               'Emoji Decoder'
             );
             if (res.success) {
-              setAwardNotice(`✅ MISSION ACCOMPLISHED! Emoji clues decoded for Team ${session.teamName || session.teamId}. Logged to central control.`);
-              setTimeout(() => navigate('/player'), 3000);
+              setAwardNotice(`✅ MISSION ACCOMPLISHED! Emoji clues decoded for Team ${session.teamName || session.teamId} (+${res.pointsAwarded} pts). Logged to central control.`);
+              setTimeout(() => navigate('/player'), 4000);
             }
           }
         }
@@ -258,8 +258,9 @@ export default function MovieEmoji({ onUnlock = () => {} }) {
               </div>
             )}
             <p style={{ fontSize: '0.9rem', opacity: 0.7, marginTop: '8px' }}>{score / 10} / {gameMovies.length} correct</p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '12px' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '14px', flexWrap: 'wrap' }}>
               <button className="game-btn btn-submit" onClick={() => { setCurrentIndex(0); setScore(0); setUserInput(''); setGameStatus('playing'); setLocalWins(0); setShowIntro(true); setGameMovies(shuffleArray(MOVIE_POOL).slice(0, TOTAL_QUESTIONS)); }}>Play Again</button>
+              <button className="game-btn btn-submit" style={{ background: '#059669', borderColor: '#10b981' }} onClick={() => navigate('/player')}>Return to Mission Deck</button>
             </div>
           </div>
         </div>

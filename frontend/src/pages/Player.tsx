@@ -9,9 +9,8 @@ import './Player.css';
 const SABOTAGE_MAP_MARKERS = [
   { power: IMPOSTOR_POWERS[0], label: 'WORDLE', top: '55%', left: '60%' },
   { power: IMPOSTOR_POWERS[1], label: 'EMOJI', top: '75%', left: '70%' },
-  { power: IMPOSTOR_POWERS[2], label: 'MEME DECODER', top: '45%', left: '20%' },
-  { power: IMPOSTOR_POWERS[3], label: 'MONKEYTYPE', top: '35%', left: '65%' },
-  { power: IMPOSTOR_POWERS[4], label: 'PACMAN', top: '20%', left: '50%' },
+  { power: IMPOSTOR_POWERS[2], label: 'MONKEYTYPE', top: '35%', left: '65%' },
+  { power: IMPOSTOR_POWERS[3], label: 'PACMAN', top: '20%', left: '50%' },
 ];
 
 function GameCardIcon({ gameId }: { gameId: string }) {
@@ -41,14 +40,6 @@ function GameCardIcon({ gameId }: { gameId: string }) {
         <svg {...sharedProps}>
           <circle cx="12" cy="12" r="9" />
           <path d="M9 10h.01M15 10h.01M8 14c1.5 2 4.5 2 6 0" />
-        </svg>
-      );
-    case 'memedecoder':
-      return (
-        <svg {...sharedProps}>
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <path d="m4 19 5-5 3 3 2-2 6 6" />
         </svg>
       );
     case 'monkeytype':
@@ -171,7 +162,7 @@ export default function Player() {
 
         validEffects.forEach(eff => {
           const lower = eff.powerName.toLowerCase();
-          ['wordle', 'emoji', 'memedecoder', 'monkeytype', 'pacman'].forEach(gId => {
+          ['wordle', 'emoji', 'monkeytype', 'pacman'].forEach(gId => {
             const shortKey = gId.replace('decoder', '');
             if (lower.includes(gId) || lower.includes(shortKey)) {
               activeFrozen[gId] = Math.max(activeFrozen[gId] || 0, eff.expiresAt);
@@ -337,7 +328,6 @@ export default function Player() {
   const getMissionClass = (id: string) => {
     if (id === 'wordle') return 'mission-wordle';
     if (id === 'emoji') return 'mission-emoji';
-    if (id === 'memedecoder') return 'mission-meme';
     if (id === 'monkeytype') return 'mission-type';
     if (id === 'pacman') return 'mission-pacman';
     return 'mission-type';
@@ -404,7 +394,23 @@ export default function Player() {
                 </div>
                 
                 <div className="mission-body">
-                  <h3 className="mission-title">{game.title}</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <h3 className="mission-title">{game.title}</h3>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      fontFamily: 'monospace',
+                      background: 'rgba(0, 240, 255, 0.1)',
+                      border: '1px solid rgba(0, 240, 255, 0.3)',
+                      color: '#00F0FF',
+                      borderRadius: '4px',
+                      padding: '2px 6px',
+                      letterSpacing: '0.5px',
+                      flexShrink: 0
+                    }}>
+                      +{game.points || 10} PTS
+                    </span>
+                  </div>
                   <p className="mission-desc">{game.description}</p>
                 </div>
                 

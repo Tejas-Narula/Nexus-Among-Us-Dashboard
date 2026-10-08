@@ -63,24 +63,25 @@ export default function WordleClone({ onUnlock = () => {} }) {
     const newLocalWins = localWins + 1;
     setLocalWins(newLocalWins);
 
-    try {
-      const sessionRaw = localStorage.getItem('nexus_player_session');
-      if (sessionRaw) {
-        const session = JSON.parse(sessionRaw);
-        if (session?.teamId) {
-          const res = AllocationDatabase.recordGameCompletion(session.teamId, 'wordle', 'Wordle');
-          if (res.success) {
-            setAwardNotice(`✅ MISSION ACCOMPLISHED! Wordle station verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
-            setTimeout(() => navigate('/player'), 3000);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Score tracking notice:', e);
-    }
-
     if (newLocalWins >= TOTAL_ROUNDS) {
       setGameFinished(true);
+      try {
+        const sessionRaw = localStorage.getItem('nexus_player_session');
+        if (sessionRaw) {
+          const session = JSON.parse(sessionRaw);
+          if (session?.teamId) {
+            const res = AllocationDatabase.recordGameCompletion(session.teamId, 'wordle', 'Wordle');
+            if (res.success) {
+              setAwardNotice(`✅ ALL ${TOTAL_ROUNDS} ROUNDS COMPLETED! Wordle station verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
+              setTimeout(() => navigate('/player'), 3500);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Score tracking notice:', e);
+      }
+    } else {
+      setAwardNotice(`🎯 ROUND ${newLocalWins} CLEARED! Click "Next Round" below to solve the next code word (${TOTAL_ROUNDS - newLocalWins} remaining).`);
     }
   };
 
@@ -246,10 +247,10 @@ export default function WordleClone({ onUnlock = () => {} }) {
         </div>
       )}
 
-      <main className="flex-1 flex gap-8 p-8 max-w-6xl mx-auto w-full h-[calc(100vh-100px)]">
+      <main className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 max-w-6xl mx-auto w-full min-h-[calc(100vh-100px)] overflow-y-auto">
         {/* Game Area */}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          <div className="flex flex-col gap-1 mb-8">
+        <div className="flex-1 flex flex-col items-center justify-center w-full">
+          <div className="flex flex-col gap-1 mb-6">
             {[...Array(MAX_ATTEMPTS)].map((_, i) => <div key={i}>{renderRow(guesses[i], i)}</div>)}
           </div>
 
@@ -262,8 +263,21 @@ export default function WordleClone({ onUnlock = () => {} }) {
               {won && (
                 <p className="text-sm text-gray-400 mb-3">Round: {localWins} / {TOTAL_ROUNDS} | {localWins === TOTAL_ROUNDS ? 'Unlocking next level...' : `${TOTAL_ROUNDS - localWins} round${TOTAL_ROUNDS - localWins !== 1 ? 's' : ''} remaining`}</p>
               )}
-              <button onClick={handlePlayAgain} className="bg-green-600 hover:bg-green-700 px-8 py-3 rounded-lg font-bold">
-                {localWins >= TOTAL_ROUNDS ? 'Advancing...' : 'Next Round'}
+              <button onClick={handlePlayAgain} className="bg-green-600 hover:bg-green-700 px-8 py-3 rounded-lg font-bold cursor-pointer transition">
+                {localWins >= TOTAL_ROUNDS ? 'Advancing...' : 'Next Round →'}
+              </button>
+            </div>
+          )}
+
+          {gameFinished && (
+            <div className="mb-6 text-center animate-fadeIn p-6 bg-slate-900 border border-emerald-500 rounded-xl">
+              <p className="text-3xl font-bold text-emerald-400 mb-2">🏆 All Rounds Completed!</p>
+              <p className="text-sm text-gray-300 mb-4">Wordle decryption sequence validated.</p>
+              <button
+                onClick={() => navigate('/player')}
+                className="bg-emerald-600 hover:bg-emerald-500 px-8 py-3 rounded-lg font-bold text-white cursor-pointer transition"
+              >
+                Return to Mission Deck
               </button>
             </div>
           )}

@@ -22,12 +22,6 @@ export const IMPOSTOR_POWERS: ImpostorPower[] = [
     targetRequired: false,
   },
   {
-    name: 'Meme Sabotage',
-    title: 'Meme Sabotage',
-    desc: 'Sabotage the Meme Decoder terminal',
-    targetRequired: false,
-  },
-  {
     name: 'MonkeyType Sabotage',
     title: 'MonkeyType Sabotage',
     desc: 'Sabotage the Code Typer terminal',
@@ -139,19 +133,9 @@ export default function Imposter({
           </button>
           
           <button 
-            className={`sabotage-btn ${cooldowns['Meme Sabotage'] ? 'cooldown' : ''}`} 
-            style={{ top: '50%', left: '10%' }} // Reactor
-            onClick={() => onTriggerPower(IMPOSTOR_POWERS[2])}
-            disabled={cooldowns['Meme Sabotage'] > 0}
-            title="Meme Sabotage (Reactor)"
-          >
-            M
-          </button>
-          
-          <button 
             className={`sabotage-btn ${cooldowns['MonkeyType Sabotage'] ? 'cooldown' : ''}`} 
             style={{ top: '40%', left: '65%' }} // O2
-            onClick={() => onTriggerPower(IMPOSTOR_POWERS[3])}
+            onClick={() => onTriggerPower(IMPOSTOR_POWERS[2])}
             disabled={cooldowns['MonkeyType Sabotage'] > 0}
             title="MonkeyType Sabotage (O2)"
           >
@@ -161,7 +145,7 @@ export default function Imposter({
           <button 
             className={`sabotage-btn ${cooldowns['Pacman Sabotage'] ? 'cooldown' : ''}`} 
             style={{ top: '15%', left: '50%' }} // Cafeteria
-            onClick={() => onTriggerPower(IMPOSTOR_POWERS[4])}
+            onClick={() => onTriggerPower(IMPOSTOR_POWERS[3])}
             disabled={cooldowns['Pacman Sabotage'] > 0}
             title="Pacman Sabotage (Cafeteria)"
           >

@@ -3,6 +3,7 @@ import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as THREE from 'three';
 import { supabase } from '../lib/supabase';
+import { AllocationDatabase } from '../lib/gameDatabase';
 import './Login.css';
 
 export default function Login() {
@@ -276,6 +277,44 @@ export default function Login() {
             }
           } catch (sbException) {
             console.error('Supabase direct auth error:', sbException);
+          }
+        }
+
+        // 3. Robust Fallback to Cached Teams (Local Storage & In-Memory)
+        if (!session) {
+          const localTeams = AllocationDatabase.getTeams();
+          const cleanId = teamId.trim().toUpperCase();
+          const cleanPhone = phoneDigits;
+          const matched = localTeams.find(t => {
+            const matchesId = (t.teamCode && t.teamCode.toUpperCase() === cleanId) ||
+                              (t.badgeCode && t.badgeCode.toUpperCase() === cleanId) ||
+                              (t.id && t.id.toUpperCase() === cleanId) ||
+                              (t.name && t.name.toUpperCase() === cleanId);
+            if (!matchesId) return false;
+            if (!cleanPhone) return true;
+            const tPhone = String(t.phone || '').replace(/\D/g, '');
+            if (tPhone && (tPhone.includes(cleanPhone) || cleanPhone.includes(tPhone) || tPhone.slice(-7) === cleanPhone.slice(-7))) {
+              return true;
+            }
+            if (Array.isArray(t.memberDetails)) {
+              return t.memberDetails.some(m => {
+                const mDigits = String(m.phone || '').replace(/\D/g, '');
+                return mDigits && (mDigits.includes(cleanPhone) || cleanPhone.includes(mDigits));
+              });
+            }
+            return true;
+          });
+
+          if (matched) {
+            session = {
+              teamId: matched.teamCode || matched.badgeCode || matched.id,
+              phone: matched.phone || leaderPhone,
+              playerName: matched.leaderName || matched.impostorPlayerName || 'Operative',
+              teamName: matched.name,
+              isImpostor: Boolean(matched.isImpostor),
+              assignedRoom: matched.assignedRoomName || matched.assignedRoom || 'Room 1 (Command Hub)',
+              eventStatus: matched.status || 'active',
+            };
           }
         }
 

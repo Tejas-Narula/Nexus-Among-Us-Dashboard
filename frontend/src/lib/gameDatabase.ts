@@ -11,11 +11,10 @@ const POWERS_STORAGE_KEY = 'nexus_powers_v2';
 const GAME_POINTS_STORAGE_KEY = 'nexus_game_points_config_v2';
 
 export const DEFAULT_GAME_POINTS: GamePointsConfig = {
-  wordle: 50,
-  emoji: 40,
-  memedecoder: 45,
-  monkeytype: 35,
-  pacman: 60,
+  wordle: 10,
+  emoji: 10,
+  monkeytype: 10,
+  pacman: 10,
 };
 
 export interface CrewmateGame {
@@ -24,6 +23,7 @@ export interface CrewmateGame {
   description: string;
   icon: string;
   route: string;
+  points?: number;
 }
 
 const CREWMATE_GAMES: readonly CrewmateGame[] = [
@@ -40,13 +40,6 @@ const CREWMATE_GAMES: readonly CrewmateGame[] = [
     description: 'Guess the phrase from emojis',
     icon: '🎭',
     route: '/games/emoji',
-  },
-  {
-    id: 'memedecoder',
-    title: 'Meme Decoder',
-    description: 'Decode the popular memes',
-    icon: '🖼️',
-    route: '/games/memedecoder',
   },
   {
     id: 'monkeytype',
@@ -218,8 +211,30 @@ const INITIAL_STAFF_USERS: AdminUser[] = [
 ];
 
 
+// UUID validation & generation for Postgres UUID columns
+export function isValidUuid(id: string): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+}
+
+export function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    try {
+      return crypto.randomUUID();
+    } catch {}
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 // Cryptographically secure ID generator
 function generateId(prefix: string): string {
+  if (prefix === 'team') {
+    return generateUuid();
+  }
   const array = new Uint32Array(2);
   if (typeof window !== 'undefined' && window.crypto) {
     window.crypto.getRandomValues(array);
@@ -279,7 +294,36 @@ async function syncRoomsToSupabase(rooms: RoomRecord[]) {
 async function syncTeamsToSupabase(teams: Team[]) {
   try {
     if (!supabase) return;
-    const payload = teams.map(t => {
+
+    // Check tombstones to ensure deleted teams are NEVER re-synced to Supabase
+    let tombstones: string[] = [];
+    try {
+      const raw = localStorage.getItem('nexus_deleted_team_ids');
+      if (raw) tombstones = JSON.parse(raw);
+    } catch (e) {}
+
+    const activeTeams = teams.filter(t => {
+      const tid = (t.id || '').toUpperCase();
+      const tcode = (t.teamCode || '').toUpperCase();
+      const tname = (t.name || '').toLowerCase();
+      return !tombstones.includes(tid) && !tombstones.includes(tcode) && !tombstones.includes(tname);
+    });
+
+    if (activeTeams.length === 0) return;
+
+    // Fetch existing records from Supabase to match canonical UUIDs and prevent 23505 duplicate key violations
+    const { data: existingRows } = await supabase.from('teams').select('id, name, team_code');
+    const existingMap = new Map<string, string>();
+    if (existingRows) {
+      existingRows.forEach((r: any) => {
+        if (r.id) {
+          if (r.name) existingMap.set(`name:${r.name.trim().toLowerCase()}`, r.id);
+          if (r.team_code) existingMap.set(`code:${r.team_code.trim().toUpperCase()}`, r.id);
+        }
+      });
+    }
+
+    const payload = activeTeams.map(t => {
       const code = t.teamCode || t.badgeCode || null;
 
       // Pack metadata record into power_ports JSONB column so gamesPlayed and sabotagesAvailable are preserved without violating schema
@@ -293,13 +337,37 @@ async function syncTeamsToSupabase(teams: Team[]) {
       const cleanedPowerPorts = (t.powerPorts || []).filter((p: any) => p && p.id !== '__meta__');
       const powerPortsWithMeta = [...cleanedPowerPorts, metaPort];
 
+      // Ensure valid UUID for Postgres UUID column, aligning with existing Supabase row if already present
+      let validId = isValidUuid(t.id) ? t.id : '';
+      if (!validId && t.name) {
+        const found = existingMap.get(`name:${t.name.trim().toLowerCase()}`);
+        if (found) validId = found;
+      }
+      if (!validId && code) {
+        const found = existingMap.get(`code:${code.trim().toUpperCase()}`);
+        if (found) validId = found;
+      }
+      if (!validId) {
+        validId = generateUuid();
+      }
+      t.id = validId; // mutate local team object so ID is a consistent valid UUID
+
+      // Ensure safe email to satisfy Postgres NOT NULL constraint
+      const safeEmail = (t.email && t.email.trim())
+        ? t.email.trim()
+        : `${(t.name || 'team').toLowerCase().replace(/[^a-z0-9]/g, '') || 'team'}@nexus.org`;
+
+      // Recalculate score from games played if score is 0
+      const gamesPts = (t.gamesPlayed || []).reduce((acc, g) => acc + (g.pointsAwarded || 0), 0);
+      const safeScore = (t.gamesPlayed && t.gamesPlayed.length > 0) ? Math.max(t.score || 0, gamesPts) : (t.score || 0);
+
       const row: Record<string, any> = {
         name: t.name,
         leader_name: t.leaderName || t.name,
-        email: t.email || `${t.name.toLowerCase().replace(/\s+/g, '')}@nexus.org`,
+        email: safeEmail,
         phone: t.phone || null,
         color: t.color || '#00F0FF',
-        score: t.score || 0,
+        score: safeScore,
         tasks_completed: (t.gamesPlayed || []).length || t.tasksCompleted || 0,
         status: t.status || 'active',
         team_code: code,
@@ -322,13 +390,20 @@ async function syncTeamsToSupabase(teams: Team[]) {
         })),
         updated_at: new Date().toISOString(),
       };
-      row.id = t.id;
+      row.id = validId;
       return row;
     });
+
     const { error } = await supabase.from('teams').upsert(payload, { onConflict: 'id' });
-    if (error) console.error('Supabase team upsert error:', error);
+    if (error) {
+      console.warn('Batch team upsert notice, trying individual sync:', error.message);
+      // Fallback: upsert individually so one faulty team doesn't block others
+      for (const row of payload) {
+        await supabase.from('teams').upsert([row], { onConflict: 'id' });
+      }
+    }
   } catch (err) {
-    console.error('Failed to sync teams:', err);
+    console.warn('syncTeamsToSupabase fallback:', err);
   }
 }
 
@@ -427,7 +502,11 @@ export const AllocationDatabase = {
   },
 
   getCrewmateGames(): CrewmateGame[] {
-    return CREWMATE_GAMES.map(game => ({ ...game }));
+    const config = this.getGamePointsConfig();
+    return CREWMATE_GAMES.map(game => ({
+      ...game,
+      points: config[game.id] ?? DEFAULT_GAME_POINTS[game.id] ?? 10,
+    }));
   },
 
   // -------------------------------------------------------------
@@ -559,6 +638,46 @@ export const AllocationDatabase = {
     return cachedTeams;
   },
 
+  getNextTeamCode(teamsList?: Team[]): string {
+    const teams = teamsList || this.getTeams();
+    let tombstones: string[] = [];
+    try {
+      const raw = localStorage.getItem('nexus_deleted_team_ids');
+      if (raw) tombstones = JSON.parse(raw);
+    } catch (e) {}
+
+    let maxNum = 0;
+    const allCodes = [
+      ...teams.map(t => t.teamCode || t.badgeCode || ''),
+      ...tombstones,
+    ];
+
+    allCodes.forEach(code => {
+      const match = String(code).match(/^NX-T(\d+)$/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    });
+
+    let nextNum = maxNum + 1;
+    let candidate = `NX-T${nextNum}`;
+    while (
+      teams.some(
+        t =>
+          (t.teamCode && t.teamCode.toUpperCase() === candidate) ||
+          (t.badgeCode && t.badgeCode.toUpperCase() === candidate) ||
+          (t.id && t.id.toUpperCase() === candidate)
+      ) ||
+      tombstones.includes(candidate)
+    ) {
+      nextNum++;
+      candidate = `NX-T${nextNum}`;
+    }
+
+    return candidate;
+  },
+
   saveTeams(teams: Team[]): void {
     cachedTeams = teams;
     try {
@@ -568,7 +687,7 @@ export const AllocationDatabase = {
   },
 
   createTeam(teamData: {
-    name: string;
+    name?: string;
     leaderName?: string;
     phone?: string;
     email?: string;
@@ -579,9 +698,24 @@ export const AllocationDatabase = {
     playerList?: { name: string; regNo?: string; phone?: string; email?: string }[];
   }): Team {
     const teams = this.getTeams();
-    const teamId = generateId('team');
-    const teamCode = teamData.teamCode?.trim().toUpperCase() || `NX-T${teams.length + 1}`;
+    const teamId = generateUuid();
+
+    // Ensure completely unique, non-colliding teamCode
+    let teamCode = teamData.teamCode?.trim().toUpperCase();
+    if (
+      !teamCode ||
+      teams.some(t => t.teamCode?.toUpperCase() === teamCode || t.badgeCode?.toUpperCase() === teamCode)
+    ) {
+      teamCode = this.getNextTeamCode(teams);
+    }
     const badgeCode = teamData.badgeCode?.trim().toUpperCase() || teamCode;
+
+    // Team name is optional; fallback to unique Squad label
+    const rawName = (teamData.name || '').trim();
+    const finalName = rawName || `Squad ${teamCode}`;
+
+    // Clean compulsory 10-digit phone
+    const cleanPhone = (teamData.phone || '').trim().replace(/\D/g, '');
 
     let members: PlayerMember[] = [];
     if (teamData.playerList && teamData.playerList.length > 0) {
@@ -591,10 +725,10 @@ export const AllocationDatabase = {
           id: generateId('player'),
           name: p.name.trim(),
           regNo: p.regNo?.trim(),
-          phone: p.phone?.trim(),
+          phone: p.phone?.trim() ? p.phone.trim().replace(/\D/g, '') : undefined,
           email: p.email?.trim(),
         }));
-    } else if (teamData.memberNames) {
+    } else if (teamData.memberNames && teamData.memberNames.length > 0) {
       members = teamData.memberNames
         .filter(n => n && n.trim())
         .map(name => ({
@@ -603,15 +737,23 @@ export const AllocationDatabase = {
         }));
     }
 
+    const safeEmail = (teamData.email && teamData.email.trim())
+      ? teamData.email.trim()
+      : `${teamCode.toLowerCase().replace(/[^a-z0-9]/g, '')}@nexus.org`;
+
     const newTeam: Team = {
       id: teamId,
       teamCode,
       badgeCode,
-      name: teamData.name.trim(),
+      name: finalName,
       leaderName: teamData.leaderName?.trim() || '',
-      phone: teamData.phone?.trim() || '',
-      email: teamData.email?.trim() || '',
+      phone: cleanPhone,
+      email: safeEmail,
       notes: teamData.notes?.trim() || '',
+      score: 0,
+      tasksCompleted: 0,
+      gamesPlayed: [],
+      sabotagesAvailable: 0,
       members: members.map(m => m.name),
       memberDetails: members,
       createdAt: new Date().toISOString(),
@@ -627,6 +769,9 @@ export const AllocationDatabase = {
     const updated = teams.map(t => {
       if (t.id === id) {
         const next = { ...t, ...updates };
+        if (updates.phone) {
+          next.phone = updates.phone.replace(/\D/g, '');
+        }
         if (updates.teamCode && !updates.badgeCode) {
           next.badgeCode = updates.teamCode;
         }
@@ -643,13 +788,182 @@ export const AllocationDatabase = {
 
   deleteTeam(id: string): Team[] {
     const teams = this.getTeams();
-    const updated = teams.filter(t => t.id !== id);
-    this.saveTeams(updated);
-    if (supabase) {
-      supabase.from('teams').delete().eq('id', id).then(({ error }) => {
-        if (error) console.error('Failed to delete team:', error);
+    const cleanId = (id || '').trim();
+    const target = teams.find(
+      t =>
+        t.id === cleanId ||
+        (t.teamCode && t.teamCode.toUpperCase() === cleanId.toUpperCase()) ||
+        (t.badgeCode && t.badgeCode.toUpperCase() === cleanId.toUpperCase()) ||
+        (t.name && t.name.toLowerCase() === cleanId.toLowerCase())
+    );
+
+    const targetId = target?.id || cleanId;
+    const targetCode = (target?.teamCode || '').trim().toUpperCase();
+    const targetBadge = (target?.badgeCode || '').trim().toUpperCase();
+    const targetName = (target?.name || '').trim();
+
+    // 1. Remove team and cleanse activeEffects on remaining teams
+    const updated = teams
+      .filter(
+        t =>
+          t.id !== cleanId &&
+          (!target || (t.id !== target.id && t.teamCode !== target.teamCode && t.name !== target.name))
+      )
+      .map(t => ({
+        ...t,
+        activeEffects: (t.activeEffects || []).filter(
+          e =>
+            e.appliedByTeamId !== targetId &&
+            e.appliedByTeamId !== targetCode &&
+            e.appliedByTeamId !== targetBadge &&
+            (!targetName || e.appliedByTeamName !== targetName)
+        ),
+      }));
+
+    // 2. Save tombstone so background sync NEVER resurrects this deleted team
+    try {
+      const tombstonesRaw = localStorage.getItem('nexus_deleted_team_ids');
+      const tombstones: string[] = tombstonesRaw ? JSON.parse(tombstonesRaw) : [];
+      if (cleanId) tombstones.push(cleanId.toUpperCase());
+      if (targetId) tombstones.push(targetId.toUpperCase());
+      if (targetCode) tombstones.push(targetCode);
+      if (targetBadge) tombstones.push(targetBadge);
+      if (targetName) tombstones.push(targetName.toLowerCase());
+      localStorage.setItem('nexus_deleted_team_ids', JSON.stringify([...new Set(tombstones)]));
+    } catch (e) {}
+
+    // 3. Purge all local activity logs for this team
+    try {
+      const currentLogs = this.getLogs();
+      const filteredLogs = currentLogs.filter(log => {
+        const lTeam = (log.teamId || '').trim().toUpperCase();
+        const lTarget = (log.targetTeamId || '').trim().toUpperCase();
+        const lName = (log.teamName || '').trim().toLowerCase();
+        const lTargetName = (log.targetTeamName || '').trim().toLowerCase();
+
+        const matchesTeam =
+          (lTeam && (lTeam === targetId.toUpperCase() || lTeam === targetCode || lTeam === targetBadge)) ||
+          (lTarget && (lTarget === targetId.toUpperCase() || lTarget === targetCode || lTarget === targetBadge)) ||
+          (targetName && (lName === targetName.toLowerCase() || lTargetName === targetName.toLowerCase())) ||
+          (targetCode && log.message && log.message.toUpperCase().includes(`(${targetCode})`));
+
+        return !matchesTeam;
       });
+      cachedLogs = filteredLogs;
+      this.saveLogs(filteredLogs);
+    } catch (e) {}
+
+    // 4. Clear active player session if logged in as this deleted team
+    try {
+      const rawSession = localStorage.getItem('nexus_player_session');
+      if (rawSession) {
+        const sess = JSON.parse(rawSession);
+        const sessId = (sess.teamId || '').trim().toUpperCase();
+        if (sessId === targetId.toUpperCase() || sessId === targetCode || sessId === targetBadge) {
+          localStorage.removeItem('nexus_player_session');
+        }
+      }
+    } catch (e) {}
+
+    this.saveTeams(updated);
+
+    // 5. Purge all records from Supabase tables
+    if (supabase) {
+      const purgeFromSupabase = async () => {
+        // A. Delete from teams table
+        if (targetId && isValidUuid(targetId)) {
+          await supabase.from('teams').delete().eq('id', targetId);
+        } else if (isValidUuid(cleanId)) {
+          await supabase.from('teams').delete().eq('id', cleanId);
+        }
+        if (targetCode) {
+          await supabase.from('teams').delete().eq('team_code', targetCode);
+        }
+        if (targetName) {
+          await supabase.from('teams').delete().eq('name', targetName);
+        }
+
+        // B. Purge activity logs for this team
+        if (targetCode) {
+          await supabase.from('activity_logs').delete().or(`team_id.eq.${targetCode},target_team_id.eq.${targetCode}`);
+        }
+        if (targetBadge && targetBadge !== targetCode) {
+          await supabase.from('activity_logs').delete().or(`team_id.eq.${targetBadge},target_team_id.eq.${targetBadge}`);
+        }
+        if (targetId && isValidUuid(targetId)) {
+          await supabase.from('activity_logs').delete().or(`team_id.eq.${targetId},target_team_id.eq.${targetId}`);
+        }
+        if (targetName) {
+          await supabase.from('activity_logs').delete().or(`team_name.eq.${targetName},target_team_name.eq.${targetName}`);
+        }
+
+        // C. Clear completed tasks and sabotage assignments in database
+        if (targetId && isValidUuid(targetId)) {
+          await supabase.from('station_tasks').update({ completed_by_team_id: null, status: 'pending', completed_at: null }).eq('completed_by_team_id', targetId);
+          await supabase.from('sabotage_events').update({ resolved_by_team_id: null }).eq('resolved_by_team_id', targetId);
+        }
+      };
+      purgeFromSupabase().catch(err => console.warn('Supabase complete team purge notice:', err));
     }
+
+    return updated;
+  },
+
+  removeGameFromTeam(teamId: string, gamePlayIdOrGameId: string): Team[] {
+    const teams = this.getTeams();
+    const cleanTeamId = (teamId || '').trim().toUpperCase();
+    const cleanGameId = (gamePlayIdOrGameId || '').trim().toLowerCase();
+
+    const updated = teams.map(t => {
+      const matches =
+        (t.id && t.id.trim().toUpperCase() === cleanTeamId) ||
+        (t.teamCode && t.teamCode.trim().toUpperCase() === cleanTeamId) ||
+        (t.badgeCode && t.badgeCode.trim().toUpperCase() === cleanTeamId) ||
+        (t.name && t.name.trim().toUpperCase() === cleanTeamId);
+
+      if (!matches) return t;
+
+      const currentGames = t.gamesPlayed || [];
+      const filteredGames = currentGames.filter(
+        g => g.id !== gamePlayIdOrGameId && g.gameId?.toLowerCase() !== cleanGameId
+      );
+
+      const recalcScore = filteredGames.reduce((acc, g) => acc + (g.pointsAwarded || 0), 0);
+
+      return {
+        ...t,
+        gamesPlayed: filteredGames,
+        score: recalcScore,
+        tasksCompleted: filteredGames.length,
+      };
+    });
+
+    this.saveTeams(updated);
+    return updated;
+  },
+
+  clearTeamGames(teamId: string): Team[] {
+    const teams = this.getTeams();
+    const cleanTeamId = (teamId || '').trim().toUpperCase();
+
+    const updated = teams.map(t => {
+      const matches =
+        (t.id && t.id.trim().toUpperCase() === cleanTeamId) ||
+        (t.teamCode && t.teamCode.trim().toUpperCase() === cleanTeamId) ||
+        (t.badgeCode && t.badgeCode.trim().toUpperCase() === cleanTeamId) ||
+        (t.name && t.name.trim().toUpperCase() === cleanTeamId);
+
+      if (!matches) return t;
+
+      return {
+        ...t,
+        gamesPlayed: [],
+        score: 0,
+        tasksCompleted: 0,
+      };
+    });
+
+    this.saveTeams(updated);
     return updated;
   },
 
@@ -1510,8 +1824,13 @@ export const AllocationDatabase = {
     targetTeamId?: string
   ): { success: boolean; message: string; log?: ActivityLogItem; targetTeam?: Team } {
     const teams = this.getTeams();
+    const cleanImpostorId = (impostorTeamId || '').trim().toUpperCase();
     const impostor = teams.find(
-      t => t.id === impostorTeamId || t.teamCode?.toUpperCase() === impostorTeamId.toUpperCase()
+      t =>
+        (t.id && t.id.trim().toUpperCase() === cleanImpostorId) ||
+        (t.teamCode && t.teamCode.trim().toUpperCase() === cleanImpostorId) ||
+        (t.badgeCode && t.badgeCode.trim().toUpperCase() === cleanImpostorId) ||
+        (t.name && t.name.trim().toLowerCase() === cleanImpostorId.toLowerCase())
     );
 
     if (!impostor) return { success: false, message: 'Impostor team not found.' };
@@ -1531,12 +1850,10 @@ export const AllocationDatabase = {
     const powerToGameId: Record<string, string> = {
       'Wordle Sabotage': 'wordle',
       'Emoji Sabotage': 'emoji',
-      'Meme Sabotage': 'memedecoder',
       'MonkeyType Sabotage': 'monkeytype',
       'Pacman Sabotage': 'pacman',
       'wordle': 'wordle',
       'emoji': 'emoji',
-      'memedecoder': 'memedecoder',
       'monkeytype': 'monkeytype',
       'pacman': 'pacman',
     };
@@ -1556,8 +1873,13 @@ export const AllocationDatabase = {
 
     let targetTeam: Team | undefined;
     if (targetTeamId) {
+      const cleanTargetId = targetTeamId.trim().toUpperCase();
       targetTeam = teams.find(
-        t => t.id === targetTeamId || t.teamCode?.toUpperCase() === targetTeamId.toUpperCase()
+        t =>
+          (t.id && t.id.trim().toUpperCase() === cleanTargetId) ||
+          (t.teamCode && t.teamCode.trim().toUpperCase() === cleanTargetId) ||
+          (t.badgeCode && t.badgeCode.trim().toUpperCase() === cleanTargetId) ||
+          (t.name && t.name.trim().toLowerCase() === cleanTargetId.toLowerCase())
       );
     }
 
@@ -1694,15 +2016,95 @@ export const AllocationDatabase = {
     return { success: true, message: actionText, log: logEntry, targetTeam };
   },
 
-  getGamePointsConfig(): GamePointsConfig { return cachedGamePoints; },
-
-  saveGamePointsConfig(config: GamePointsConfig): GamePointsConfig {
+  getGamePointsConfig(): GamePointsConfig {
     try {
-      localStorage.setItem(GAME_POINTS_STORAGE_KEY, JSON.stringify(config));
+      const stored = localStorage.getItem(GAME_POINTS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          cachedGamePoints = {
+            wordle: typeof parsed.wordle === 'number' ? parsed.wordle : (parseInt(parsed.wordle, 10) || DEFAULT_GAME_POINTS.wordle),
+            emoji: typeof parsed.emoji === 'number' ? parsed.emoji : (parseInt(parsed.emoji, 10) || DEFAULT_GAME_POINTS.emoji),
+            monkeytype: typeof parsed.monkeytype === 'number' ? parsed.monkeytype : (parseInt(parsed.monkeytype, 10) || DEFAULT_GAME_POINTS.monkeytype),
+            pacman: typeof parsed.pacman === 'number' ? parsed.pacman : (parseInt(parsed.pacman, 10) || DEFAULT_GAME_POINTS.pacman),
+          };
+          return cachedGamePoints;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed reading game points config from storage', e);
+    }
+    return cachedGamePoints;
+  },
+
+  saveGamePointsConfig(config: GamePointsConfig, recalculateExistingScores: boolean = true): GamePointsConfig {
+    const sanitized: GamePointsConfig = {
+      wordle: Number(config.wordle) || DEFAULT_GAME_POINTS.wordle,
+      emoji: Number(config.emoji) || DEFAULT_GAME_POINTS.emoji,
+      monkeytype: Number(config.monkeytype) || DEFAULT_GAME_POINTS.monkeytype,
+      pacman: Number(config.pacman) || DEFAULT_GAME_POINTS.pacman,
+    };
+    cachedGamePoints = sanitized;
+    try {
+      localStorage.setItem(GAME_POINTS_STORAGE_KEY, JSON.stringify(sanitized));
     } catch (e) {
       console.warn('Failed to save game points config', e);
     }
-    return config;
+
+    if (recalculateExistingScores) {
+      try {
+        const teams = this.getTeams();
+        let anyModified = false;
+        const updatedTeams = teams.map(team => {
+          if (Array.isArray(team.gamesPlayed) && team.gamesPlayed.length > 0) {
+            const updatedGames = team.gamesPlayed.map(g => {
+              const newPts = sanitized[g.gameId as keyof GamePointsConfig];
+              if (typeof newPts === 'number') {
+                anyModified = true;
+                return {
+                  ...g,
+                  pointsAwarded: newPts,
+                  score: newPts,
+                };
+              }
+              return g;
+            });
+            const newScore = updatedGames.reduce((acc, g) => acc + (g.pointsAwarded || 0), 0);
+            return {
+              ...team,
+              gamesPlayed: updatedGames,
+              score: newScore,
+            };
+          }
+          return team;
+        });
+
+        if (anyModified) {
+          this.saveTeams(updatedTeams);
+        }
+      } catch (err) {
+        console.warn('Score recalculation notice:', err);
+      }
+    }
+
+    // Broadcast across Supabase event controls so all connected client devices receive the points
+    if (supabase) {
+      supabase
+        .from('event_controls')
+        .update({
+          active_sabotage: JSON.stringify({ gamePoints: sanitized }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', 'primary_match')
+        .then(() => {}, () => {});
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('nexus_game_points_updated', { detail: sanitized }));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {}
+
+    return sanitized;
   },
 
   recordGameCompletion(
@@ -1874,7 +2276,26 @@ export const AllocationDatabase = {
       // 2. Fetch Teams
       const { data: teamsData, error: teamsErr } = await supabase.from('teams').select('*');
       if (!teamsErr && teamsData && teamsData.length > 0) {
-        const mappedTeams: Team[] = teamsData.map((t: any) => {
+        let tombstones: string[] = [];
+        try {
+          const raw = localStorage.getItem('nexus_deleted_team_ids');
+          if (raw) tombstones = JSON.parse(raw);
+        } catch (e) {}
+
+        const mappedTeams: Team[] = teamsData
+          .filter((t: any) => {
+            const tid = (t.id || '').trim().toUpperCase();
+            const tcode = (t.team_code || '').trim().toUpperCase();
+            const tbadge = (t.badge_code || '').trim().toUpperCase();
+            const tname = (t.name || '').trim().toLowerCase();
+            return (
+              !tombstones.includes(tid) &&
+              !tombstones.includes(tcode) &&
+              !tombstones.includes(tbadge) &&
+              !tombstones.includes(tname)
+            );
+          })
+          .map((t: any) => {
           const rawPowerPorts = Array.isArray(t.power_ports) ? t.power_ports : [];
           const metaPort = rawPowerPorts.find((p: any) => p && p.id === '__meta__');
           const cleanPowerPorts = rawPowerPorts.filter((p: any) => p && p.id !== '__meta__');
@@ -1882,6 +2303,9 @@ export const AllocationDatabase = {
           const gamesPlayed = (metaPort && Array.isArray(metaPort.gamesPlayed))
             ? metaPort.gamesPlayed
             : (Array.isArray(t.games_played) ? t.games_played : (Array.isArray(t.gamesPlayed) ? t.gamesPlayed : []));
+
+          const calculatedPoints = gamesPlayed.reduce((acc: number, g: any) => acc + (g.pointsAwarded || 0), 0);
+          const score = (gamesPlayed && gamesPlayed.length > 0) ? Math.max(t.score || 0, calculatedPoints) : (t.score || 0);
 
           const sabotagesAvailable = (metaPort && typeof metaPort.sabotagesAvailable === 'number')
             ? metaPort.sabotagesAvailable
@@ -1896,8 +2320,8 @@ export const AllocationDatabase = {
             phone: t.phone || '',
             email: t.email || '',
             color: t.color || '#00F0FF',
-            score: t.score || 0,
-            tasksCompleted: t.tasks_completed ?? gamesPlayed.length ?? 0,
+            score,
+            tasksCompleted: (gamesPlayed && gamesPlayed.length > 0) ? gamesPlayed.length : (t.tasks_completed ?? 0),
             status: t.status || 'active',
             assignedRoom: t.assigned_room || undefined,
             assignedRoomId: t.assigned_room_id || undefined,
@@ -1982,16 +2406,23 @@ export const AllocationDatabase = {
           localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(mappedLogs));
         } catch (e) {}
 
-        // Correlate task completion logs with teams so no completed games are ever lost
+        // Correlate task completion logs with teams strictly by exact ID/code
         const taskLogs = mappedLogs.filter(l => l.type === 'task' && l.message && l.message.includes('completed'));
         if (taskLogs.length > 0 && cachedTeams.length > 0) {
           cachedTeams = cachedTeams.map(team => {
-            const teamCode = (team.teamCode || '').toUpperCase();
-            const teamId = (team.id || '').toUpperCase();
-            const teamName = (team.name || '').toLowerCase();
+            const teamCode = (team.teamCode || '').trim().toUpperCase();
+            const teamId = (team.id || '').trim().toUpperCase();
+            const badgeCode = (team.badgeCode || '').trim().toUpperCase();
+
             const relevantLogs = taskLogs.filter(l => {
-              const lTeam = (l.teamId || '').toUpperCase();
-              return lTeam === teamCode || lTeam === teamId || (l.message && l.message.toLowerCase().includes(teamName));
+              const lTeam = (l.teamId || '').trim().toUpperCase();
+              if (lTeam && (lTeam === teamCode || lTeam === teamId || lTeam === badgeCode)) {
+                return true;
+              }
+              if (teamCode && l.message && l.message.toUpperCase().includes(`(${teamCode})`)) {
+                return true;
+              }
+              return false;
             });
 
             if (relevantLogs.length === 0) return team;
@@ -2013,9 +2444,6 @@ export const AllocationDatabase = {
               } else if (msg.includes('Wordle') || msg.toLowerCase().includes('wordle')) {
                 detectedGameId = 'wordle';
                 detectedTitle = 'Wordle';
-              } else if (msg.includes('Meme Decoder') || msg.toLowerCase().includes('memedecoder')) {
-                detectedGameId = 'memedecoder';
-                detectedTitle = 'Meme Decoder Terminal';
               } else if (msg.includes('Pacman') || msg.toLowerCase().includes('pacman')) {
                 detectedGameId = 'pacman';
                 detectedTitle = 'Pacman Sector Defense';
@@ -2035,10 +2463,12 @@ export const AllocationDatabase = {
             });
 
             if (modified) {
+              const recalcPoints = existingGames.reduce((acc, g) => acc + (g.pointsAwarded || 40), 0);
               return {
                 ...team,
+                score: Math.max(team.score || 0, recalcPoints),
                 gamesPlayed: existingGames,
-                tasksCompleted: Math.max(team.tasksCompleted || 0, existingGames.length),
+                tasksCompleted: existingGames.length,
               };
             }
             return team;
@@ -2048,6 +2478,33 @@ export const AllocationDatabase = {
             localStorage.setItem(TEAMS_STORAGE_KEY, JSON.stringify(cachedTeams));
           } catch (e) {}
         }
+      }
+
+      // 6. Fetch Global Game Points Configuration
+      try {
+        const { data: ecData } = await supabase
+          .from('event_controls')
+          .select('active_sabotage')
+          .eq('id', 'primary_match')
+          .maybeSingle();
+
+        if (ecData?.active_sabotage) {
+          const parsed = JSON.parse(ecData.active_sabotage);
+          if (parsed?.gamePoints && typeof parsed.gamePoints === 'object') {
+            const remotePoints: GamePointsConfig = {
+              wordle: Number(parsed.gamePoints.wordle) || DEFAULT_GAME_POINTS.wordle,
+              emoji: Number(parsed.gamePoints.emoji) || DEFAULT_GAME_POINTS.emoji,
+              monkeytype: Number(parsed.gamePoints.monkeytype) || DEFAULT_GAME_POINTS.monkeytype,
+              pacman: Number(parsed.gamePoints.pacman) || DEFAULT_GAME_POINTS.pacman,
+            };
+            cachedGamePoints = remotePoints;
+            try {
+              localStorage.setItem(GAME_POINTS_STORAGE_KEY, JSON.stringify(remotePoints));
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        // Fallback gracefully
       }
     } catch (e) {
       console.warn('Sync from Supabase failed or offline', e);

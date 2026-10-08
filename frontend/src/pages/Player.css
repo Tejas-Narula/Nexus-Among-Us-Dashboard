@@ -13,7 +13,8 @@
 body {
   margin: 0; padding: 0; background: var(--bg-deep); color: var(--text-primary);
   font-family: 'Inter', system-ui, sans-serif;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* Background Atmosphere */
@@ -38,9 +39,13 @@ body {
 /* Main Layout */
 .player-viewport {
   position: relative; z-index: 10;
-  height: 100vh; display: grid;
-  grid-template-rows: auto 1fr auto;
-  padding: 32px 48px; box-sizing: border-box;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px 32px;
+  box-sizing: border-box;
+  overflow-y: auto;
 }
 
 /* HUD Top */
@@ -173,7 +178,6 @@ body {
 /* Colors for specific games */
 .mission-wordle { --mission-color: #10b981; --mission-color-dim: rgba(16, 185, 129, 0.3); }
 .mission-emoji { --mission-color: #eab308; --mission-color-dim: rgba(234, 179, 8, 0.3); }
-.mission-meme { --mission-color: #a855f7; --mission-color-dim: rgba(168, 85, 247, 0.3); }
 .mission-type { --mission-color: #3b82f6; --mission-color-dim: rgba(59, 130, 246, 0.3); }
 .mission-pacman { --mission-color: #f97316; --mission-color-dim: rgba(249, 115, 22, 0.3); }
 

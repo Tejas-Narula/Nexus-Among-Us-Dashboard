@@ -51,7 +51,7 @@ const App: React.FC<AppProps> = ({ initialTeamName = '' }) => {
             'Pacman Sector Defense'
           );
           if (res.success) {
-            setAwardNotice(`✅ MISSION ACCOMPLISHED! Sector cleared for Team ${session.teamName || session.teamId}. Logged to central control.`);
+            setAwardNotice(`✅ MISSION ACCOMPLISHED! Sector cleared for Team ${session.teamName || session.teamId} (+${res.pointsAwarded} pts). Logged to central control.`);
             setTimeout(() => navigate('/player'), 3000);
           }
         }

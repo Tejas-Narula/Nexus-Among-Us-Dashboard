@@ -183,6 +183,17 @@ export default function AmongUsAdmin() {
     setStaffUsers(AllocationDatabase.getStaffUsers());
     setActivityLogs(AllocationDatabase.getLogs());
     setPowerLibrary(AllocationDatabase.getPowerLibrary());
+    const initialPts = AllocationDatabase.getGamePointsConfig();
+    setGamePointsConfig(initialPts);
+    setPointsForm(initialPts);
+
+    const handlePointsEvent = (ev: any) => {
+      if (ev?.detail) {
+        setGamePointsConfig(ev.detail);
+        setPointsForm(ev.detail);
+      }
+    };
+    window.addEventListener('nexus_game_points_updated', handlePointsEvent);
 
     const refreshFromSupabase = async () => {
       try {
@@ -192,6 +203,8 @@ export default function AmongUsAdmin() {
         setStaffUsers(AllocationDatabase.getStaffUsers());
         setActivityLogs(AllocationDatabase.getLogs());
         setPowerLibrary(AllocationDatabase.getPowerLibrary());
+        const remotePts = AllocationDatabase.getGamePointsConfig();
+        setGamePointsConfig(remotePts);
       } catch (err) {
         setActivityLogs(AllocationDatabase.getLogs());
         setTeams(AllocationDatabase.getTeams());
@@ -205,7 +218,10 @@ export default function AmongUsAdmin() {
     const pollLogs = setInterval(() => {
       refreshFromSupabase();
     }, 4000);
-    return () => clearInterval(pollLogs);
+    return () => {
+      clearInterval(pollLogs);
+      window.removeEventListener('nexus_game_points_updated', handlePointsEvent);
+    };
   }, []);
 
   const handleManualSync = async () => {
@@ -217,6 +233,9 @@ export default function AmongUsAdmin() {
       setStaffUsers(AllocationDatabase.getStaffUsers());
       setActivityLogs(AllocationDatabase.getLogs());
       setPowerLibrary(AllocationDatabase.getPowerLibrary());
+      const remotePts = AllocationDatabase.getGamePointsConfig();
+      setGamePointsConfig(remotePts);
+      setPointsForm(remotePts);
       notify('All logs, teams, and scores synced from database!');
     } catch (err) {
       setActivityLogs(AllocationDatabase.getLogs());
@@ -232,9 +251,11 @@ export default function AmongUsAdmin() {
   // -------------------------------------------------------------
   const handleSaveGamePoints = (e: React.FormEvent) => {
     e.preventDefault();
-    AllocationDatabase.saveGamePointsConfig(pointsForm);
-    setGamePointsConfig(pointsForm);
-    notify('Station game points configuration updated successfully!');
+    const saved = AllocationDatabase.saveGamePointsConfig(pointsForm, true);
+    setGamePointsConfig(saved);
+    setPointsForm(saved);
+    setTeams(AllocationDatabase.getTeams());
+    notify('Station game points saved and recalculated across all squads!');
   };
 
   const handleApplyPointsAdjustment = (e: React.FormEvent) => {
@@ -619,9 +640,10 @@ export default function AmongUsAdmin() {
   // -------------------------------------------------------------
   const openAddTeam = () => {
     setEditingTeamId(null);
+    const nextCode = AllocationDatabase.getNextTeamCode(teams);
     setTeamForm({
-      name: `Team ${teams.length + 1}`,
-      teamCode: `NX-T${teams.length + 1}`,
+      name: '',
+      teamCode: nextCode,
       leaderName: '',
       phone: '',
       playerNames: '',
@@ -648,16 +670,29 @@ export default function AmongUsAdmin() {
 
   const handleSaveTeam = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!teamForm.name.trim()) return;
 
-    const names = teamForm.playerNames
-      .split(/[\n,]+/)
-      .map(n => n.trim())
-      .filter(Boolean);
+    // 1. Mobile number is COMPULSORY and must be exactly 10 digits
+    const cleanPhone = (teamForm.phone || '').trim().replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      alert('Leader Mobile Number is compulsory and must be exactly 10 digits (e.g. 9876543210).');
+      return;
+    }
 
-    const cleanTeamCode = teamForm.teamCode.trim().toUpperCase() || undefined;
+    // 2. Team Code is guaranteed unique
+    const cleanTeamCode = teamForm.teamCode.trim().toUpperCase() || AllocationDatabase.getNextTeamCode(teams);
+
+    // 3. Team Name is OPTIONAL (defaults to unique squad label)
+    const rawName = teamForm.name.trim();
+    const finalName = rawName || `Squad ${cleanTeamCode}`;
     const cleanLeaderName = teamForm.leaderName.trim() || undefined;
-    const cleanPhone = teamForm.phone.trim() || undefined;
+
+    // 4. Members / Player list is NOT required (optional)
+    const names = teamForm.playerNames
+      ? teamForm.playerNames
+          .split(/[\n,]+/)
+          .map(n => n.trim())
+          .filter(Boolean)
+      : [];
 
     if (editingTeamId) {
       // Edit existing team
@@ -675,7 +710,7 @@ export default function AmongUsAdmin() {
       });
 
       AllocationDatabase.updateTeam(editingTeamId, {
-        name: teamForm.name.trim(),
+        name: finalName,
         teamCode: cleanTeamCode,
         badgeCode: cleanTeamCode,
         leaderName: cleanLeaderName,
@@ -691,11 +726,11 @@ export default function AmongUsAdmin() {
       }
 
       setTeams(AllocationDatabase.getTeams());
-      notify(`Updated ${teamForm.name.trim()}`);
+      notify(`Updated ${finalName}`);
     } else {
       // Add new team
       const created = AllocationDatabase.createTeam({
-        name: teamForm.name.trim(),
+        name: finalName,
         teamCode: cleanTeamCode,
         badgeCode: cleanTeamCode,
         leaderName: cleanLeaderName,
@@ -708,18 +743,37 @@ export default function AmongUsAdmin() {
       }
 
       setTeams(AllocationDatabase.getTeams());
-      notify(`Added ${created.name} (${names.length} players)`);
+      notify(`Added ${created.name} (Code: ${created.teamCode || created.id})`);
     }
 
     setTeamModalOpen(false);
   };
 
   const handleDeleteTeam = (teamId: string, teamName: string) => {
-    if (window.confirm(`Delete ${teamName}?`)) {
+    if (window.confirm(`Delete ${teamName}? This will permanently purge the squad and all its scores, logs, and progress.`)) {
       const updated = AllocationDatabase.deleteTeam(teamId);
       setTeams(updated);
-      notify(`Deleted ${teamName}`);
+      setActivityLogs(AllocationDatabase.getLogs());
+      notify(`Deleted ${teamName} and all associated data.`);
     }
+  };
+
+  const handleClearAllGames = (teamId: string) => {
+    if (window.confirm('Clear all recorded games and points for this team?')) {
+      const updated = AllocationDatabase.clearTeamGames(teamId);
+      setTeams(updated);
+      const cleanTeam = updated.find(t => t.id === teamId || t.teamCode === teamId);
+      if (cleanTeam) setSelectedTeamGames(cleanTeam);
+      notify('All games cleared for team.');
+    }
+  };
+
+  const handleRemoveGame = (teamId: string, gamePlayIdOrGameId: string) => {
+    const updated = AllocationDatabase.removeGameFromTeam(teamId, gamePlayIdOrGameId);
+    setTeams(updated);
+    const cleanTeam = updated.find(t => t.id === teamId || t.teamCode === teamId);
+    if (cleanTeam) setSelectedTeamGames(cleanTeam);
+    notify('Game record removed.');
   };
 
   // -------------------------------------------------------------
@@ -1886,7 +1940,7 @@ export default function AmongUsAdmin() {
 
                         <span className="px-2 py-0.5 border border-amber-300 rounded text-[11px] font-mono font-bold bg-amber-50 text-amber-800 flex items-center gap-1 shadow-xs" title="Total Score">
                           <Trophy className="w-3 h-3 text-amber-600" />
-                          <span>{team.score || 0} PTS</span>
+                          <span>{Math.max(team.score || 0, (team.gamesPlayed || []).reduce((acc, g) => acc + (g.pointsAwarded || 0), 0))} PTS</span>
                         </span>
 
                         <span className="px-2 py-0.5 border border-blue-200 rounded text-[11px] font-mono font-medium bg-blue-50 text-blue-700 flex items-center gap-1" title="Games Completed">
@@ -2140,24 +2194,6 @@ export default function AmongUsAdmin() {
                         max="500"
                         value={pointsForm.emoji}
                         onChange={e => setPointsForm({ ...pointsForm, emoji: parseInt(e.target.value) || 0 })}
-                        className="w-full border border-neutral-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold bg-white text-black outline-none focus:border-black"
-                      />
-                      <span className="text-xs font-mono font-bold text-neutral-500">PTS</span>
-                    </div>
-                  </div>
-
-                  <div className="p-3 border border-neutral-200 rounded-lg bg-neutral-50 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs">🖼️ Meme Decoder</span>
-                      <span className="text-[10px] text-neutral-400 font-mono">Visual Terminal</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min="5"
-                        max="500"
-                        value={pointsForm.memedecoder}
-                        onChange={e => setPointsForm({ ...pointsForm, memedecoder: parseInt(e.target.value) || 0 })}
                         className="w-full border border-neutral-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold bg-white text-black outline-none focus:border-black"
                       />
                       <span className="text-xs font-mono font-bold text-neutral-500">PTS</span>
@@ -2747,7 +2783,7 @@ export default function AmongUsAdmin() {
       {/* ========================================================= */}
       {teamModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-white border border-neutral-300 rounded-xl p-5 shadow-2xl space-y-4 text-xs font-sans animate-in fade-in zoom-in-95 duration-150">
+          <div className="w-full max-w-md bg-white border border-neutral-300 rounded-xl p-5 shadow-2xl space-y-4 text-xs font-sans animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
               <div className="flex items-center gap-2">
                 <div className="w-6 h-6 rounded-md bg-black text-white flex items-center justify-center font-bold text-xs">
@@ -2768,15 +2804,15 @@ export default function AmongUsAdmin() {
             <form onSubmit={handleSaveTeam} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-neutral-700 font-semibold text-xs">
-                    Team Name <span className="text-red-500">*</span>
+                  <label className="block text-neutral-700 font-semibold text-xs flex items-center justify-between">
+                    <span>Team Name</span>
+                    <span className="text-[10px] text-neutral-400 font-normal">Optional</span>
                   </label>
                   <input
                     type="text"
                     value={teamForm.name}
                     onChange={e => setTeamForm({ ...teamForm, name: e.target.value })}
-                    placeholder="e.g. Red Squad, Team 1"
-                    required
+                    placeholder={`Optional (defaults to Squad ${teamForm.teamCode || '...'})`}
                     className="w-full border border-neutral-300 rounded-md px-3 py-1.5 text-xs outline-none focus:border-black font-medium"
                   />
                 </div>
@@ -2790,7 +2826,7 @@ export default function AmongUsAdmin() {
                     type="text"
                     value={teamForm.teamCode}
                     onChange={e => setTeamForm({ ...teamForm, teamCode: e.target.value.toUpperCase() })}
-                    placeholder="e.g. NX-T1"
+                    placeholder="Auto-assigned unique ID"
                     className="w-full border border-neutral-300 rounded-md px-3 py-1.5 text-xs outline-none focus:border-black font-mono font-bold uppercase"
                   />
                 </div>
@@ -2801,6 +2837,7 @@ export default function AmongUsAdmin() {
                   <label className="block text-neutral-700 font-semibold text-xs flex items-center gap-1">
                     <Crown className="w-3 h-3 text-neutral-600" />
                     <span>Team Leader Name</span>
+                    <span className="text-[10px] text-neutral-400 font-normal">(Optional)</span>
                   </label>
                   <input
                     type="text"
@@ -2815,16 +2852,19 @@ export default function AmongUsAdmin() {
                   <label className="block text-neutral-700 font-semibold text-xs flex items-center justify-between">
                     <span className="flex items-center gap-1">
                       <Phone className="w-3 h-3 text-neutral-600" />
-                      <span>Leader Mobile</span>
+                      <span>Leader Mobile <span className="text-red-500">*</span></span>
                     </span>
-                    <span className="text-[10px] text-neutral-400 font-normal">For Login</span>
+                    <span className="text-[10px] text-red-500 font-semibold">10 Digits Required</span>
                   </label>
                   <input
                     type="tel"
+                    required
+                    maxLength={10}
+                    pattern="[0-9]{10}"
                     value={teamForm.phone}
-                    onChange={e => setTeamForm({ ...teamForm, phone: e.target.value })}
-                    placeholder="e.g. 9876543210"
-                    className="w-full border border-neutral-300 rounded-md px-3 py-1.5 text-xs outline-none focus:border-black font-mono"
+                    onChange={e => setTeamForm({ ...teamForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+                    placeholder="10-digit mobile number"
+                    className="w-full border border-neutral-300 rounded-md px-3 py-1.5 text-xs outline-none focus:border-black font-mono font-semibold"
                   />
                 </div>
               </div>
@@ -2850,12 +2890,12 @@ export default function AmongUsAdmin() {
               <div className="space-y-1">
                 <label className="block text-neutral-700 font-semibold text-xs flex items-center justify-between">
                   <span>Player Roster</span>
-                  <span className="text-[10px] text-neutral-400 font-normal">Comma or new-line separated</span>
+                  <span className="text-[10px] text-neutral-400 font-normal">Optional (not required)</span>
                 </label>
                 <textarea
                   value={teamForm.playerNames}
                   onChange={e => setTeamForm({ ...teamForm, playerNames: e.target.value })}
-                  placeholder="Rohan Sharma&#10;Sneha Kapoor&#10;Aditya Roy"
+                  placeholder="Optional: Enter player names (one per line) or leave blank"
                   rows={3}
                   className="w-full border border-neutral-300 rounded-md px-3 py-1.5 text-xs outline-none focus:border-black font-sans"
                 />
@@ -2887,7 +2927,7 @@ export default function AmongUsAdmin() {
       {/* ========================================================= */}
       {personModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-xs bg-white border border-neutral-300 rounded-xl p-5 shadow-lg space-y-4 text-xs font-sans">
+          <div className="w-full max-w-xs bg-white border border-neutral-300 rounded-xl p-5 shadow-lg space-y-4 text-xs font-sans max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
               <span className="font-bold text-sm">Add Player</span>
               <button onClick={() => setPersonModalOpen(false)} className="text-neutral-400 hover:text-black">
@@ -3615,7 +3655,7 @@ export default function AmongUsAdmin() {
                   <span>{selectedTeamGames.name}</span>
                 </h3>
                 <span className="text-xs text-neutral-500 font-mono">
-                  ID: {selectedTeamGames.teamCode || selectedTeamGames.id} • Score: {selectedTeamGames.score || 0} PTS
+                  ID: {selectedTeamGames.teamCode || selectedTeamGames.id} • Score: {Math.max(selectedTeamGames.score || 0, (selectedTeamGames.gamesPlayed || []).reduce((acc, g) => acc + (g.pointsAwarded || 0), 0))} PTS
                 </span>
               </div>
               <button
@@ -3643,9 +3683,18 @@ export default function AmongUsAdmin() {
                         {new Date(g.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} • Raw Score: {g.score ?? 'N/A'}
                       </span>
                     </div>
-                    <span className="px-2.5 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 rounded font-mono font-bold text-xs">
-                      +{g.pointsAwarded} PTS
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 rounded font-mono font-bold text-xs">
+                        +{g.pointsAwarded} PTS
+                      </span>
+                      <button
+                        onClick={() => handleRemoveGame(selectedTeamGames.id, g.id || g.gameId)}
+                        className="p-1 hover:bg-red-50 text-neutral-400 hover:text-red-600 rounded transition"
+                        title="Remove Game Record"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -3655,12 +3704,23 @@ export default function AmongUsAdmin() {
               <span className="text-xs font-mono font-bold text-neutral-700">
                 Total Games Completed: {selectedTeamGames.gamesPlayed?.length || 0}
               </span>
-              <button
-                onClick={() => setSelectedTeamGames(null)}
-                className="px-4 py-1.5 bg-black hover:bg-neutral-800 text-white rounded text-xs font-bold transition"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedTeamGames.gamesPlayed && selectedTeamGames.gamesPlayed.length > 0 && (
+                  <button
+                    onClick={() => handleClearAllGames(selectedTeamGames.id)}
+                    className="px-3 py-1.5 border border-red-300 text-red-600 hover:bg-red-50 rounded text-xs font-bold transition flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Clear All</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedTeamGames(null)}
+                  className="px-4 py-1.5 bg-black hover:bg-neutral-800 text-white rounded text-xs font-bold transition"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3669,7 +3729,7 @@ export default function AmongUsAdmin() {
       {/* Adjust Points Modal */}
       {adjustPointsTeam && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white border border-neutral-200 rounded-lg max-w-sm w-full p-5 space-y-4 shadow-2xl">
+          <div className="bg-white border border-neutral-200 rounded-lg max-w-sm w-full p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="font-bold text-base text-black flex items-center gap-1.5">

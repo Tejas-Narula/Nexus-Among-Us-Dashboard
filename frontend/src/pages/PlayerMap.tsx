@@ -21,7 +21,6 @@ interface PlayerState {
 const GAMES = [
   { id: 'wordle', title: 'Wordle (Admin)', route: '/games/wordle', x: 65, y: 60 },
   { id: 'emoji', title: 'Emoji (Coms)', route: '/games/emoji', x: 60, y: 85 },
-  { id: 'memedecoder', title: 'Meme (Reactor)', route: '/games/memedecoder', x: 10, y: 50 },
   { id: 'monkeytype', title: 'Code Typer (O2)', route: '/games/monkeytype', x: 65, y: 40 },
   { id: 'pacman', title: 'Pacman (Cafeteria)', route: '/games/pacman', x: 50, y: 15 },
 ];

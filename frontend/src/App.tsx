@@ -8,7 +8,6 @@ const Login = lazy(() => import('./pages/Login'));
 const Player = lazy(() => import('./pages/Player'));
 const Wordle = lazy(() => import('./games/Wordle'));
 const Emoji = lazy(() => import('./games/Emoji/Emoji'));
-const MemeDecoder = lazy(() => import('./games/MemeDecoder/App'));
 const MonkeyType = lazy(() => import('./games/MonkeyType/App'));
 const Pacman = lazy(() => import('./games/Pacman/App'));
 
@@ -23,7 +22,6 @@ function GlobalFreezeListener() {
       let gameId = '';
       if (path.includes('wordle')) gameId = 'wordle';
       else if (path.includes('emoji')) gameId = 'emoji';
-      else if (path.includes('memedecoder')) gameId = 'memedecoder';
       else if (path.includes('monkeytype')) gameId = 'monkeytype';
       else if (path.includes('pacman')) gameId = 'pacman';
 
@@ -59,7 +57,6 @@ export default function App() {
             <Route path="/dashboard" element={<AmongUsAdmin />} />
             <Route path="/games/wordle" element={<Wordle />} />
             <Route path="/games/emoji" element={<Emoji />} />
-            <Route path="/games/memedecoder" element={<MemeDecoder />} />
             <Route path="/games/monkeytype" element={<MonkeyType />} />
             <Route path="/games/pacman" element={<Pacman />} />
             <Route path="*" element={<Navigate to="/" replace />} />

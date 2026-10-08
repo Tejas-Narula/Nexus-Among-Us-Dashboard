@@ -34,24 +34,27 @@ const MonkeyType: React.FC = () => {
     setTestResult(result);
     setIsTestRunning(false);
 
-    try {
-      const sessionRaw = localStorage.getItem('nexus_player_session');
-      if (sessionRaw) {
-        const session = JSON.parse(sessionRaw);
-        if (session?.teamId) {
-          const res = AllocationDatabase.recordGameCompletion(
-            session.teamId,
-            'monkeytype',
-            'Code Typer Mission'
-          );
-          if (res.success) {
-            setAwardNotice(`✅ MISSION ACCOMPLISHED! Terminal code verified for Team ${session.teamName || session.teamId}. Logged to central control.`);
-            setTimeout(() => navigate('/player'), 3000);
+    if (result.passed) {
+      try {
+        const sessionRaw = localStorage.getItem('nexus_player_session');
+        if (sessionRaw) {
+          const session = JSON.parse(sessionRaw);
+          if (session?.teamId) {
+            const res = AllocationDatabase.recordGameCompletion(
+              session.teamId,
+              'monkeytype',
+              'Code Typer Mission'
+            );
+            if (res.success) {
+              setAwardNotice(`✅ MISSION ACCOMPLISHED! Code speed & accuracy verified for Team ${session.teamName || session.teamId} (+${res.pointsAwarded} pts). Points credited.`);
+            }
           }
         }
+      } catch (e) {
+        console.warn('MonkeyType score error:', e);
       }
-    } catch (e) {
-      console.warn('MonkeyType score error:', e);
+    } else {
+      setAwardNotice(`⚠️ TEST INCOMPLETE: Target requirement is 40+ WPM & 70%+ Accuracy (Achieved: ${result.wpm} WPM, ${result.accuracy}% Acc). Click "Play Again" below to retry.`);
     }
   };
 

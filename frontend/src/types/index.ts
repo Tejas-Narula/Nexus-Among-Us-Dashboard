@@ -84,7 +84,7 @@ export interface Team {
 
 export interface GamePlayedRecord {
   id: string;
-  gameId: 'wordle' | 'emoji' | 'memedecoder' | 'monkeytype' | 'pacman' | string;
+  gameId: 'wordle' | 'emoji' | 'monkeytype' | 'pacman' | string;
   gameTitle: string;
   pointsAwarded: number;
   score?: number;
@@ -94,7 +94,6 @@ export interface GamePlayedRecord {
 export interface GamePointsConfig {
   wordle: number;
   emoji: number;
-  memedecoder: number;
   monkeytype: number;
   pacman: number;
 }
